@@ -1,0 +1,66 @@
+name: cross-platform
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libuv1-dev libserialport-dev libgtest-dev ninja-build
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libuv libserialport googletest ninja
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install libuv:x64-windows libserialport:x64-windows gtest:x64-windows
+
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        env:
+          CMAKE_PREFIX_PATH: /opt/homebrew;/usr/local
+          PKG_CONFIG_PATH: /opt/homebrew/opt/libuv/lib/pkgconfig:/usr/local/opt/libuv/lib/pkgconfig
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >
+          cmake -S . -B build -A x64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build --parallel 2
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Debug --parallel 2
+
+      - name: C++ and integration tests (Unix)
+        if: runner.os != 'Windows'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: C++ and integration tests (Windows)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build --config Debug --output-on-failure
