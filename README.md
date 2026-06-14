@@ -32,6 +32,40 @@ ctest --test-dir build --output-on-failure
 A Debug build defines `DEBUG`, enabling full request and response hex dumps.
 libuv's worker count can be selected before startup with `UV_THREADPOOL_SIZE`.
 
+### Release Build
+
+For Ninja, Unix Makefiles, and other single-configuration generators:
+
+```sh
+cmake -S . -B build-release \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF
+cmake --build build-release --parallel
+```
+
+Run the optimized server:
+
+```sh
+./build-release/nrpc_server 9000
+```
+
+For Visual Studio on Windows, select the configuration when building:
+
+```powershell
+cmake -S . -B build-release -A x64 -DBUILD_TESTING=OFF
+cmake --build build-release --config Release --parallel
+.\build-release\Release\nrpc_server.exe 9000
+```
+
+To test the Release configuration, omit `-DBUILD_TESTING=OFF` and run:
+
+```sh
+ctest --test-dir build-release --build-config Release --output-on-failure
+```
+
+Release builds retain `ERROR`, `WARN`, and `INFO` logging but omit Debug packet
+hex dumps.
+
 ## Run
 
 ```sh
