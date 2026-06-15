@@ -33,7 +33,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          vcpkg install libuv:x64-windows libserialport:x64-windows gtest:x64-windows
+          vcpkg install libuv:x64-windows gtest:x64-windows
 
       - name: Configure (Unix)
         if: runner.os != 'Windows'

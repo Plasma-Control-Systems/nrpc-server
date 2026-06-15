@@ -19,6 +19,7 @@ if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
             ${CMAKE_COMMAND} -E env
             PYTHONPATH=${NRPC_PYTHON_CLIENT_SOURCE_DIR}
             NRPC_SERVER=$<TARGET_FILE:nrpc_server>
+            NRPC_HAS_SERIAL_BACKEND=${NRPC_ENABLE_SERIAL_BACKEND}
             BASIC_RPC_EXAMPLE=${NRPC_PYTHON_CLIENT_SOURCE_DIR}/examples/basic_rpc.py
             ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/integration_test.py

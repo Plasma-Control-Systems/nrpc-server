@@ -10,7 +10,7 @@ Dependencies:
 - CMake 3.20 or newer
 - C++23 compiler with `std::expected` support
 - libuv
-- libserialport
+- libserialport (optional; required for the serial backend)
 - GoogleTest
 
 Supported and continuously tested platforms:
@@ -21,7 +21,9 @@ Supported and continuously tested platforms:
 
 The build accepts libuv through a CMake config package (including vcpkg's
 `unofficial::libuv::libuv` target) or through `pkg-config`. Compiler warning
-flags are selected separately for MSVC and GCC/Clang.
+flags are selected separately for MSVC and GCC/Clang. If libserialport is not
+available, the server builds without functions 32 through 35; pass
+`-DNRPC_ENABLE_SERIAL_BACKEND=OFF` to select that configuration explicitly.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug

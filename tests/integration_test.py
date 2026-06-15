@@ -130,6 +130,8 @@ class ClientServerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 1002)
 
     def test_real_libserialport_reports_missing_port(self):
+        if os.environ["NRPC_HAS_SERIAL_BACKEND"] != "ON":
+            self.skipTest("server was built without libserialport")
         with NrpcClient("127.0.0.1", self.port) as client:
             with self.assertRaises(RemoteError) as raised:
                 client.open_serial_backend(

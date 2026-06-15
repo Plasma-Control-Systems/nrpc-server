@@ -11,6 +11,11 @@ option(
     "Enable tests that require the standalone Python client repository"
     OFF
 )
+option(
+    NRPC_ENABLE_SERIAL_BACKEND
+    "Build the libserialport backend when libserialport is available"
+    ON
+)
 if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
     if(
         NOT NRPC_PYTHON_CLIENT_SOURCE_DIR
@@ -51,30 +56,47 @@ else()
     set(NRPC_LIBUV_TARGET PkgConfig::LIBUV)
 endif()
 
-find_package(libserialport CONFIG QUIET)
-if(TARGET unofficial::libserialport::libserialport)
-    set(NRPC_LIBSERIALPORT_TARGET unofficial::libserialport::libserialport)
-elseif(TARGET libserialport::libserialport)
-    set(NRPC_LIBSERIALPORT_TARGET libserialport::libserialport)
-elseif(TARGET serialport)
-    set(NRPC_LIBSERIALPORT_TARGET serialport)
-else()
-    if(NOT PkgConfig_FOUND)
-        find_package(PkgConfig REQUIRED)
-    endif()
-    pkg_check_modules(LIBSERIALPORT QUIET IMPORTED_TARGET libserialport)
-    if(TARGET PkgConfig::LIBSERIALPORT)
-        set(NRPC_LIBSERIALPORT_TARGET PkgConfig::LIBSERIALPORT)
+if(NRPC_ENABLE_SERIAL_BACKEND)
+    find_package(libserialport CONFIG QUIET)
+    if(TARGET unofficial::libserialport::libserialport)
+        set(NRPC_LIBSERIALPORT_TARGET unofficial::libserialport::libserialport)
+    elseif(TARGET libserialport::libserialport)
+        set(NRPC_LIBSERIALPORT_TARGET libserialport::libserialport)
+    elseif(TARGET serialport)
+        set(NRPC_LIBSERIALPORT_TARGET serialport)
     else()
-        find_path(LIBSERIALPORT_INCLUDE_DIR libserialport.h REQUIRED)
-        find_library(LIBSERIALPORT_LIBRARY NAMES serialport libserialport REQUIRED)
-        add_library(nrpc_libserialport UNKNOWN IMPORTED)
-        set_target_properties(
-            nrpc_libserialport PROPERTIES
-            IMPORTED_LOCATION "${LIBSERIALPORT_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${LIBSERIALPORT_INCLUDE_DIR}"
+        if(NOT PkgConfig_FOUND)
+            find_package(PkgConfig QUIET)
+        endif()
+        if(PkgConfig_FOUND)
+            pkg_check_modules(LIBSERIALPORT QUIET IMPORTED_TARGET libserialport)
+        endif()
+        if(TARGET PkgConfig::LIBSERIALPORT)
+            set(NRPC_LIBSERIALPORT_TARGET PkgConfig::LIBSERIALPORT)
+        else()
+            find_path(LIBSERIALPORT_INCLUDE_DIR libserialport.h)
+            find_library(
+                LIBSERIALPORT_LIBRARY
+                NAMES serialport libserialport
+            )
+            if(LIBSERIALPORT_INCLUDE_DIR AND LIBSERIALPORT_LIBRARY)
+                add_library(nrpc_libserialport UNKNOWN IMPORTED)
+                set_target_properties(
+                    nrpc_libserialport PROPERTIES
+                    IMPORTED_LOCATION "${LIBSERIALPORT_LIBRARY}"
+                    INTERFACE_INCLUDE_DIRECTORIES
+                        "${LIBSERIALPORT_INCLUDE_DIR}"
+                )
+                set(NRPC_LIBSERIALPORT_TARGET nrpc_libserialport)
+            endif()
+        endif()
+    endif()
+    if(NOT NRPC_LIBSERIALPORT_TARGET)
+        message(
+            WARNING
+            "libserialport was not found; building without the serial backend"
         )
-        set(NRPC_LIBSERIALPORT_TARGET nrpc_libserialport)
+        set(NRPC_ENABLE_SERIAL_BACKEND OFF)
     endif()
 endif()
 
@@ -96,15 +118,19 @@ add_library(nrpc
     src/protocol.cpp
     src/resource_manager.cpp
     src/server.cpp
-    src/serial_backend.cpp
     src/tcp_backend.cpp
 )
+if(NRPC_ENABLE_SERIAL_BACKEND)
+    target_sources(nrpc PRIVATE src/serial_backend.cpp)
+endif()
 target_include_directories(nrpc PUBLIC include)
-target_link_libraries(
-    nrpc PUBLIC
-    ${NRPC_LIBUV_TARGET}
-    ${NRPC_LIBSERIALPORT_TARGET}
-)
+target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
+if(NRPC_ENABLE_SERIAL_BACKEND)
+    target_link_libraries(nrpc PUBLIC ${NRPC_LIBSERIALPORT_TARGET})
+    target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=1)
+else()
+    target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=0)
+endif()
 if(WIN32)
     target_link_libraries(nrpc PUBLIC ws2_32)
 endif()
