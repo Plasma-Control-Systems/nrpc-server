@@ -11,6 +11,7 @@ Dependencies:
 - C++23 compiler with `std::expected` support
 - libuv
 - libserialport (optional; required for the serial backend)
+- LCard lcomp/wlcomp (optional; Windows only)
 - GoogleTest
 
 Supported and continuously tested platforms:
@@ -24,6 +25,10 @@ The build accepts libuv through a CMake config package (including vcpkg's
 flags are selected separately for MSVC and GCC/Clang. If libserialport is not
 available, the server builds without functions 32 through 35; pass
 `-DNRPC_ENABLE_SERIAL_BACKEND=OFF` to select that configuration explicitly.
+On Windows, the LCard backend is enabled when lcomp and wlcomp are found under
+`C:\Program Files (x86)\LCard\LIBRARY`. Override the installation with
+`-DNRPC_LCARD_LIBRARY_DIR=...`, disable it with
+`-DNRPC_ENABLE_LCARD_BACKEND=OFF`, or set `NRPC_LCARD_LIBRARY_DIR` at runtime.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -90,6 +95,7 @@ The sample executable registers two mock functions:
 - `1`: blocking sleep accepting one network-order `uint32` duration in ms
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: libserialport serial backend
+- `48` through `52`: Windows LCard lcomp/wlcomp backend
 
 The sleep backend exists to exercise worker isolation and timeout handling.
 
@@ -136,6 +142,36 @@ client disconnects.
 The four open settings are data bits, parity, stop bits, and flow control.
 Parity codes are none `0`, odd `1`, even `2`, mark `3`, and space `4`. Flow
 control codes are none `0`, software `1`, RTS/CTS `2`, and DTR/DSR `3`.
+
+## LCard Backend
+
+The Windows-only LCard backend dynamically loads the installed wlcomp wrapper,
+which in turn loads the matching 32-bit or 64-bit lcomp library. Device handles
+are scoped to their owning nRPC connection and close automatically on
+disconnect.
+
+`register_lcard_backend(dispatcher)` installs this function table:
+
+| Index | Operation | Arguments | Result |
+| ---: | --- | --- | --- |
+| 48 | Open | `uint32 slot`, `uint32 board type`, `string BIOS path` | `uint64 handle` |
+| 49 | IoAsync | handle, operation, rate, mode, count/mask, channels, data | actual rate, data |
+| 50 | Slot info | `uint64 handle` | board type, DSP type, IRQ |
+| 51 | Load BIOS | `uint64 handle`, `string path` | no variables |
+| 52 | Close | `uint64 handle` | no variables |
+
+The server rejects open when the physical slot's `BoardType` differs from the
+requested type. Supported values are PCI A `5`, PCI B `6`, PCI C `14`, L791
+`19`, E440 `30`, E140 `31`, E2010 `32`, E154 `38`, E2010B `39`, and E310 `77`.
+
+The BIOS path may be empty during open. IoAsync operation codes follow wlcomp:
+ADC configure `3`, TTL configure `4`, DAC configure `5`, ADC input `6`, TTL
+input `7`, TTL output `8`, DAC output `9`, and frequency input `10`. Channels
+and data are `uint32` arrays with at most 128 elements. The server validates
+device-specific layouts before calling wlcomp, including E310 ADC masks and
+four-value reads, L791 paired DAC output, E140 dual DAC output, E154 8-bit DAC
+values, E2010's lack of asynchronous ADC input, and PCI C-only TTL direction
+configuration.
 
 ## Server API
 
@@ -205,6 +241,13 @@ Server-reserved error codes:
 | 3006 | Serial read failed |
 | 3007 | Serial operation timed out |
 | 3008 | Serial operation unsupported |
+| 4001 | Invalid LCard backend arguments |
+| 4002 | LCard library load failed |
+| 4003 | LCard device open failed |
+| 4004 | Invalid or foreign LCard handle |
+| 4005 | LCard operation failed |
+| 4006 | LCard operation unsupported |
+| 4007 | LCard operation timed out |
 
 Backend error codes otherwise pass through unchanged. The Python client raises
 `RemoteError` for server/backend failures and `ProtocolError` for malformed

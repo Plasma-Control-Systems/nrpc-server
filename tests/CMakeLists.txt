@@ -6,6 +6,9 @@ add_executable(nrpc_tests
     resource_manager_test.cpp
     smoke_test.cpp
 )
+if(NRPC_ENABLE_LCARD_BACKEND)
+    target_sources(nrpc_tests PRIVATE lcard_backend_test.cpp)
+endif()
 target_link_libraries(nrpc_tests PRIVATE nrpc GTest::gtest_main)
 nrpc_enable_warnings(nrpc_tests)
 

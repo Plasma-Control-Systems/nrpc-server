@@ -16,6 +16,16 @@ option(
     "Build the libserialport backend when libserialport is available"
     ON
 )
+option(
+    NRPC_ENABLE_LCARD_BACKEND
+    "Build the Windows LCard backend when the vendor library is available"
+    ON
+)
+set(
+    NRPC_LCARD_LIBRARY_DIR
+    "C:/Program Files (x86)/LCard/LIBRARY"
+    CACHE PATH "Path to the LCard lcomp/wlcomp installation"
+)
 if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
     if(
         NOT NRPC_PYTHON_CLIENT_SOURCE_DIR
@@ -100,6 +110,40 @@ if(NRPC_ENABLE_SERIAL_BACKEND)
     endif()
 endif()
 
+if(NRPC_ENABLE_LCARD_BACKEND)
+    if(
+        NOT WIN32
+        OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/include/ioctl.h"
+        OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/include/wlcomp.h"
+    )
+        message(
+            STATUS
+            "LCard lcomp/wlcomp was not found; building without the LCard backend"
+        )
+        set(NRPC_ENABLE_LCARD_BACKEND OFF)
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        if(
+            NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/lcomp64.dll"
+            OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/wlcomp64.dll"
+        )
+            message(
+                WARNING
+                "64-bit LCard DLLs were not found; building without the LCard backend"
+            )
+            set(NRPC_ENABLE_LCARD_BACKEND OFF)
+        endif()
+    elseif(
+        NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/lcomp.dll"
+        OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/wlcomp.dll"
+    )
+        message(
+            WARNING
+            "32-bit LCard DLLs were not found; building without the LCard backend"
+        )
+        set(NRPC_ENABLE_LCARD_BACKEND OFF)
+    endif()
+endif()
+
 function(nrpc_enable_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /permissive-)
@@ -123,6 +167,9 @@ add_library(nrpc
 if(NRPC_ENABLE_SERIAL_BACKEND)
     target_sources(nrpc PRIVATE src/serial_backend.cpp)
 endif()
+if(NRPC_ENABLE_LCARD_BACKEND)
+    target_sources(nrpc PRIVATE src/lcard_backend.cpp)
+endif()
 target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
 if(NRPC_ENABLE_SERIAL_BACKEND)
@@ -130,6 +177,15 @@ if(NRPC_ENABLE_SERIAL_BACKEND)
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=1)
 else()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=0)
+endif()
+if(NRPC_ENABLE_LCARD_BACKEND)
+    target_compile_definitions(
+        nrpc PUBLIC NRPC_HAS_LCARD_BACKEND=1
+        PRIVATE
+            NRPC_LCARD_LIBRARY_DIR="${NRPC_LCARD_LIBRARY_DIR}"
+    )
+else()
+    target_compile_definitions(nrpc PUBLIC NRPC_HAS_LCARD_BACKEND=0)
 endif()
 if(WIN32)
     target_link_libraries(nrpc PUBLIC ws2_32)

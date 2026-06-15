@@ -13,6 +13,9 @@
 #include <vector>
 
 #include "nrpc/server.hpp"
+#if NRPC_HAS_LCARD_BACKEND
+#include "nrpc/lcard_backend.hpp"
+#endif
 #if NRPC_HAS_SERIAL_BACKEND
 #include "nrpc/serial_backend.hpp"
 #endif
@@ -68,6 +71,9 @@ int main(int argc, char** argv) {
         "writing server logs to " + log_path.string());
     nrpc::ResourceManager resources;
     nrpc::Dispatcher dispatcher;
+#if NRPC_HAS_LCARD_BACKEND
+    nrpc::register_lcard_backend(dispatcher);
+#endif
 #if NRPC_HAS_SERIAL_BACKEND
     nrpc::register_serial_backend(dispatcher);
 #endif
