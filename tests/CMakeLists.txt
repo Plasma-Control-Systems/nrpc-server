@@ -9,6 +9,10 @@ add_executable(nrpc_tests
 if(NRPC_ENABLE_LCARD_BACKEND)
     target_sources(nrpc_tests PRIVATE lcard_backend_test.cpp)
 endif()
+if(WIN32 AND NRPC_ENABLE_SERIAL_BACKEND)
+    target_sources(nrpc_tests PRIVATE serial_port_win32_test.cpp)
+    target_include_directories(nrpc_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+endif()
 target_link_libraries(nrpc_tests PRIVATE nrpc GTest::gtest_main)
 nrpc_enable_warnings(nrpc_tests)
 

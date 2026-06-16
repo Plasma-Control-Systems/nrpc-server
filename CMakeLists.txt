@@ -13,7 +13,7 @@ option(
 )
 option(
     NRPC_ENABLE_SERIAL_BACKEND
-    "Build the libserialport backend when libserialport is available"
+    "Build the serial backend"
     ON
 )
 option(
@@ -66,7 +66,7 @@ else()
     set(NRPC_LIBUV_TARGET PkgConfig::LIBUV)
 endif()
 
-if(NRPC_ENABLE_SERIAL_BACKEND)
+if(NRPC_ENABLE_SERIAL_BACKEND AND NOT WIN32)
     find_package(libserialport CONFIG QUIET)
     if(TARGET unofficial::libserialport::libserialport)
         set(NRPC_LIBSERIALPORT_TARGET unofficial::libserialport::libserialport)
@@ -166,6 +166,11 @@ add_library(nrpc
 )
 if(NRPC_ENABLE_SERIAL_BACKEND)
     target_sources(nrpc PRIVATE src/serial_backend.cpp)
+    if(WIN32)
+        target_sources(nrpc PRIVATE src/serial_port_win32.cpp)
+    else()
+        target_sources(nrpc PRIVATE src/serial_port_libserialport.cpp)
+    endif()
 endif()
 if(NRPC_ENABLE_LCARD_BACKEND)
     target_sources(nrpc PRIVATE src/lcard_backend.cpp)
@@ -173,7 +178,9 @@ endif()
 target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
 if(NRPC_ENABLE_SERIAL_BACKEND)
-    target_link_libraries(nrpc PUBLIC ${NRPC_LIBSERIALPORT_TARGET})
+    if(NOT WIN32)
+        target_link_libraries(nrpc PUBLIC ${NRPC_LIBSERIALPORT_TARGET})
+    endif()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=1)
 else()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=0)

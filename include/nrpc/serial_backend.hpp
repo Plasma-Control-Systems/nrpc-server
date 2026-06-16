@@ -7,8 +7,6 @@
 #include <span>
 #include <string_view>
 
-#include <libserialport.h>
-
 #include "nrpc/dispatcher.hpp"
 #include "nrpc/error_codes.hpp"
 
@@ -72,9 +70,10 @@ public:
     void close() noexcept;
 
 private:
-    explicit SerialPort(sp_port* port) noexcept : port_(port) {}
-    sp_port* port_{nullptr};
-    bool opened_{false};
+    struct Impl;
+
+    explicit SerialPort(std::unique_ptr<Impl> impl) noexcept;
+    std::unique_ptr<Impl> impl_;
 };
 
 void register_serial_backend(Dispatcher& dispatcher);

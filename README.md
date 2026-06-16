@@ -10,7 +10,7 @@ Dependencies:
 - CMake 3.20 or newer
 - C++23 compiler with `std::expected` support
 - libuv
-- libserialport (optional; required for the serial backend)
+- libserialport (optional on Unix; required for the Unix serial backend)
 - LCard lcomp/wlcomp (optional; Windows only)
 - GoogleTest
 
@@ -22,8 +22,10 @@ Supported and continuously tested platforms:
 
 The build accepts libuv through a CMake config package (including vcpkg's
 `unofficial::libuv::libuv` target) or through `pkg-config`. Compiler warning
-flags are selected separately for MSVC and GCC/Clang. If libserialport is not
-available, the server builds without functions 32 through 35; pass
+flags are selected separately for MSVC and GCC/Clang. Windows serial support
+uses native Win32 APIs without an external serial dependency. On Unix, if
+libserialport is not available, the server builds without functions 32 through
+35; pass
 `-DNRPC_ENABLE_SERIAL_BACKEND=OFF` to select that configuration explicitly.
 On Windows, the LCard backend is enabled when lcomp and wlcomp are found under
 `C:\Program Files (x86)\LCard\LIBRARY`. Override the installation with
@@ -94,7 +96,7 @@ The sample executable registers two mock functions:
 - `0`: arena-backed echo
 - `1`: blocking sleep accepting one network-order `uint32` duration in ms
 - `16` through `19`: cross-platform TCP backend
-- `32` through `35`: libserialport serial backend
+- `32` through `35`: serial backend
 - `48` through `52`: Windows LCard lcomp/wlcomp backend
 
 The sleep backend exists to exercise worker isolation and timeout handling.
@@ -124,11 +126,10 @@ by another client.
 
 ## Serial Backend
 
-The serial backend uses
-[libserialport](https://sigrok.org/wiki/Libserialport) for portable access to
-COM ports and Unix serial devices. Blocking operations execute in the libuv
-worker pool, and handles are automatically closed when their owning nRPC
-client disconnects.
+The serial backend uses native Win32 serial handles for COM ports on Windows
+and [libserialport](https://sigrok.org/wiki/Libserialport) for Unix serial
+devices. Blocking operations execute in the libuv worker pool, and handles are
+automatically closed when their owning nRPC client disconnects.
 
 `register_serial_backend(dispatcher)` installs this function table:
 
