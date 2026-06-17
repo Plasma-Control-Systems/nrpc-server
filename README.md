@@ -37,9 +37,10 @@ thirdparty/
 Use `-DNRPC_THIRDPARTY_DIR=...` if the folder is not under the repository root.
 Windows serial support uses native Win32 APIs without an external serial
 dependency. The LCard backend is built on Windows and loads `wlcomp`/`lcomp`
-at runtime from `thirdparty/libs` by default; override it with
-`-DNRPC_LCARD_LIBRARY_DIR=...`, disable it with
-`-DNRPC_ENABLE_LCARD_BACKEND=OFF`, or set `NRPC_LCARD_LIBRARY_DIR` at runtime.
+at runtime from `C:\Program Files (x86)\LCard\LIBRARY\BIN` by default;
+override it with `-DNRPC_LCARD_LIBRARY_DIR=...`, disable it with
+`-DNRPC_ENABLE_LCARD_BACKEND=OFF`, or set `NRPC_LCARD_LIBRARY_DIR` at
+runtime.
 
 On Linux and macOS, the build accepts libuv through a CMake config package or
 through `pkg-config`. On Unix, if libserialport is not available, the server

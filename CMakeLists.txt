@@ -33,7 +33,7 @@ set(
 )
 set(
     NRPC_LCARD_LIBRARY_DIR
-    "${NRPC_THIRDPARTY_DIR}/libs"
+    "C:/Program Files (x86)/LCard/LIBRARY/BIN"
     CACHE PATH "Path to the LCard lcomp/wlcomp runtime DLL directory"
 )
 if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
