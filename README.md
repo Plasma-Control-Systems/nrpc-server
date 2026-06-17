@@ -12,7 +12,7 @@ Dependencies:
 - libuv
 - libserialport (optional on Unix; required for the Unix serial backend)
 - LCard lcomp/wlcomp (optional; Windows only)
-- GoogleTest
+- GoogleTest (test builds only)
 
 Supported and continuously tested platforms:
 
@@ -20,17 +20,35 @@ Supported and continuously tested platforms:
 - macOS with AppleClang
 - Windows with MSVC and Winsock 2
 
-The build accepts libuv through a CMake config package (including vcpkg's
-`unofficial::libuv::libuv` target) or through `pkg-config`. Compiler warning
-flags are selected separately for MSVC and GCC/Clang. Windows serial support
-uses native Win32 APIs without an external serial dependency. On Unix, if
-libserialport is not available, the server builds without functions 32 through
-35; pass
-`-DNRPC_ENABLE_SERIAL_BACKEND=OFF` to select that configuration explicitly.
-On Windows, the LCard backend is enabled when lcomp and wlcomp are found under
-`C:\Program Files (x86)\LCard\LIBRARY`. Override the installation with
+On Windows, dependencies are read from a local `thirdparty` directory instead
+of a package manager. This folder is for application/runtime dependencies, not
+test-only libraries:
+
+```text
+thirdparty/
+  include/
+    uv.h
+  libs/
+    uv_a.lib            # or libuv_a.lib / libuv.lib / uv.lib
+    wlcomp64.dll        # optional, for runtime LCard access
+    lcomp64.dll         # optional, for runtime LCard access
+```
+
+Use `-DNRPC_THIRDPARTY_DIR=...` if the folder is not under the repository root.
+Windows serial support uses native Win32 APIs without an external serial
+dependency. The LCard backend is built on Windows and loads `wlcomp`/`lcomp`
+at runtime from `thirdparty/libs` by default; override it with
 `-DNRPC_LCARD_LIBRARY_DIR=...`, disable it with
 `-DNRPC_ENABLE_LCARD_BACKEND=OFF`, or set `NRPC_LCARD_LIBRARY_DIR` at runtime.
+
+On Linux and macOS, the build accepts libuv through a CMake config package or
+through `pkg-config`. On Unix, if libserialport is not available, the server
+builds without functions 32 through 35; pass
+`-DNRPC_ENABLE_SERIAL_BACKEND=OFF` to select that configuration explicitly.
+Compiler warning flags are selected separately for MSVC and GCC/Clang.
+When tests are enabled, CMake first looks for an installed `GTest::gtest_main`
+package and otherwise downloads GoogleTest into the build tree with
+FetchContent. Disable that fallback with `-DNRPC_FETCH_GTEST=OFF`.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -64,6 +82,26 @@ For Visual Studio on Windows, select the configuration when building:
 cmake -S . -B build-release -A x64 -DBUILD_TESTING=OFF
 cmake --build build-release --config Release --parallel
 .\build-release\Release\nrpc_server.exe 9000
+```
+
+Create a runtime artifact that contains only the server executable:
+
+```powershell
+cmake --install build-release --config Release `
+  --prefix artifacts\nrpc-runtime `
+  --component runtime
+```
+
+Build tests as a separate artifact so GoogleTest remains a build/test
+dependency and is not part of the shipped application:
+
+```powershell
+cmake -S . -B build-tests -A x64 -DBUILD_TESTING=ON
+cmake --build build-tests --config Debug --parallel
+ctest --test-dir build-tests --build-config Debug --output-on-failure
+cmake --install build-tests --config Debug `
+  --prefix artifacts\nrpc-tests `
+  --component tests
 ```
 
 To test the Release configuration, omit `-DBUILD_TESTING=OFF` and run:

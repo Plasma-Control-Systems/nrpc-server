@@ -21,10 +21,20 @@ option(
     "Build the Windows LCard backend when the vendor library is available"
     ON
 )
+option(
+    NRPC_FETCH_GTEST
+    "Download GoogleTest with FetchContent when tests are enabled and no package is installed"
+    ON
+)
+set(
+    NRPC_THIRDPARTY_DIR
+    "${PROJECT_SOURCE_DIR}/thirdparty"
+    CACHE PATH "Windows-only directory containing include/ and libs/ folders"
+)
 set(
     NRPC_LCARD_LIBRARY_DIR
-    "C:/Program Files (x86)/LCard/LIBRARY"
-    CACHE PATH "Path to the LCard lcomp/wlcomp installation"
+    "${NRPC_THIRDPARTY_DIR}/libs"
+    CACHE PATH "Path to the LCard lcomp/wlcomp runtime DLL directory"
 )
 if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
     if(
@@ -51,19 +61,54 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(libuv CONFIG QUIET)
-if(TARGET unofficial::libuv::libuv)
-    set(NRPC_LIBUV_TARGET unofficial::libuv::libuv)
-elseif(TARGET libuv::uv)
-    set(NRPC_LIBUV_TARGET libuv::uv)
-elseif(TARGET uv)
-    set(NRPC_LIBUV_TARGET uv)
-elseif(TARGET uv_a)
-    set(NRPC_LIBUV_TARGET uv_a)
+if(WIN32)
+    set(NRPC_THIRDPARTY_INCLUDE_DIR "${NRPC_THIRDPARTY_DIR}/include")
+    set(NRPC_THIRDPARTY_LIBRARY_DIR "${NRPC_THIRDPARTY_DIR}/libs")
+
+    find_path(
+        NRPC_LIBUV_INCLUDE_DIR
+        NAMES uv.h
+        PATHS "${NRPC_THIRDPARTY_INCLUDE_DIR}"
+        NO_DEFAULT_PATH
+    )
+    find_library(
+        NRPC_LIBUV_LIBRARY
+        NAMES uv_a libuv_a libuv uv
+        PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}"
+        NO_DEFAULT_PATH
+    )
+    if(NOT NRPC_LIBUV_INCLUDE_DIR OR NOT NRPC_LIBUV_LIBRARY)
+        message(
+            FATAL_ERROR
+            "Windows builds require libuv in ${NRPC_THIRDPARTY_DIR}: "
+            "put uv.h under include/ and uv_a.lib, libuv_a.lib, "
+            "libuv.lib, or uv.lib under libs/"
+        )
+    endif()
+
+    add_library(nrpc_libuv UNKNOWN IMPORTED)
+    set_target_properties(
+        nrpc_libuv PROPERTIES
+        IMPORTED_LOCATION "${NRPC_LIBUV_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${NRPC_LIBUV_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "ws2_32;iphlpapi;psapi;userenv;dbghelp"
+    )
+    set(NRPC_LIBUV_TARGET nrpc_libuv)
 else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBUV REQUIRED IMPORTED_TARGET libuv)
-    set(NRPC_LIBUV_TARGET PkgConfig::LIBUV)
+    find_package(libuv CONFIG QUIET)
+    if(TARGET unofficial::libuv::libuv)
+        set(NRPC_LIBUV_TARGET unofficial::libuv::libuv)
+    elseif(TARGET libuv::uv)
+        set(NRPC_LIBUV_TARGET libuv::uv)
+    elseif(TARGET uv)
+        set(NRPC_LIBUV_TARGET uv)
+    elseif(TARGET uv_a)
+        set(NRPC_LIBUV_TARGET uv_a)
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(LIBUV REQUIRED IMPORTED_TARGET libuv)
+        set(NRPC_LIBUV_TARGET PkgConfig::LIBUV)
+    endif()
 endif()
 
 if(NRPC_ENABLE_SERIAL_BACKEND AND NOT WIN32)
@@ -113,32 +158,10 @@ endif()
 if(NRPC_ENABLE_LCARD_BACKEND)
     if(
         NOT WIN32
-        OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/include/ioctl.h"
-        OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/include/wlcomp.h"
     )
         message(
             STATUS
-            "LCard lcomp/wlcomp was not found; building without the LCard backend"
-        )
-        set(NRPC_ENABLE_LCARD_BACKEND OFF)
-    elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        if(
-            NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/lcomp64.dll"
-            OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/wlcomp64.dll"
-        )
-            message(
-                WARNING
-                "64-bit LCard DLLs were not found; building without the LCard backend"
-            )
-            set(NRPC_ENABLE_LCARD_BACKEND OFF)
-        endif()
-    elseif(
-        NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/lcomp.dll"
-        OR NOT EXISTS "${NRPC_LCARD_LIBRARY_DIR}/BIN/wlcomp.dll"
-    )
-        message(
-            WARNING
-            "32-bit LCard DLLs were not found; building without the LCard backend"
+            "LCard lcomp/wlcomp is Windows-only; building without the LCard backend"
         )
         set(NRPC_ENABLE_LCARD_BACKEND OFF)
     endif()
@@ -204,12 +227,41 @@ add_executable(nrpc_server src/main.cpp)
 target_link_libraries(nrpc_server PRIVATE nrpc)
 nrpc_enable_warnings(nrpc_server)
 target_compile_definitions(nrpc_server PRIVATE $<$<CONFIG:Debug>:DEBUG>)
+install(TARGETS nrpc_server RUNTIME DESTINATION bin COMPONENT runtime)
 
 include(CTest)
 if(BUILD_TESTING)
-    find_package(GTest REQUIRED)
+    if(WIN32)
+        find_package(
+            GTest CONFIG QUIET
+            PATHS "${NRPC_THIRDPARTY_DIR}/libs/cmake/GTest"
+        )
+    else()
+        find_package(GTest CONFIG QUIET)
+    endif()
+    if(NOT TARGET GTest::gtest_main)
+        if(NRPC_FETCH_GTEST)
+            include(FetchContent)
+            set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+            FetchContent_Declare(
+                googletest
+                GIT_REPOSITORY https://github.com/google/googletest.git
+                GIT_TAG v1.14.0
+            )
+            FetchContent_MakeAvailable(googletest)
+        else()
+            message(
+                FATAL_ERROR
+                "GTest was not found. Install GoogleTest or configure with "
+                "-DNRPC_FETCH_GTEST=ON to download it for test builds."
+            )
+        endif()
+    endif()
     if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
     endif()
-    add_subdirectory(tests)
+    if(BUILD_TESTING)
+        add_subdirectory(tests)
+        install(TARGETS nrpc_server RUNTIME DESTINATION bin COMPONENT tests)
+    endif()
 endif()

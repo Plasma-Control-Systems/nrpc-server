@@ -1,7 +1,10 @@
 /build/
 /build-*/
+/temp/
 /.cache/
 /.pytest_cache/
 __pycache__/
 *.py[cod]
 *.log
+.vscode/
+thirdparty/

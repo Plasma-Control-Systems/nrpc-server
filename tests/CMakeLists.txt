@@ -15,6 +15,7 @@ if(WIN32 AND NRPC_ENABLE_SERIAL_BACKEND)
 endif()
 target_link_libraries(nrpc_tests PRIVATE nrpc GTest::gtest_main)
 nrpc_enable_warnings(nrpc_tests)
+install(TARGETS nrpc_tests RUNTIME DESTINATION tests COMPONENT tests)
 
 include(GoogleTest)
 gtest_discover_tests(nrpc_tests)
@@ -57,6 +58,11 @@ if(NOT WIN32 AND NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
     nrpc_enable_warnings(nrpc_serial_test_server)
     target_compile_definitions(
         nrpc_serial_test_server PRIVATE $<$<CONFIG:Debug>:DEBUG>
+    )
+    install(
+        TARGETS nrpc_serial_test_server
+        RUNTIME DESTINATION tests
+        COMPONENT tests
     )
 
     add_test(

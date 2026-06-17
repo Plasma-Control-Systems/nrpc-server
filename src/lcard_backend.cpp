@@ -317,6 +317,15 @@ std::filesystem::path lcard_library_directory() {
     return NRPC_LCARD_LIBRARY_DIR;
 }
 
+std::filesystem::path first_existing_path(
+    const std::filesystem::path& first,
+    const std::filesystem::path& fallback) {
+    if (std::filesystem::exists(first)) {
+        return first;
+    }
+    return fallback;
+}
+
 template <typename Function>
 std::expected<Function, BackendError> load_function(
     HMODULE module, const char* name) {
@@ -476,11 +485,15 @@ public:
         std::string_view bios_path) override {
         const auto directory = lcard_library_directory();
 #if defined(_WIN64)
-        const auto wrapper_path = directory / "BIN" / "wlcomp64.dll";
-        const auto api_path = directory / "BIN" / "lcomp64.dll";
+        const auto wrapper_path = first_existing_path(
+            directory / "wlcomp64.dll", directory / "BIN" / "wlcomp64.dll");
+        const auto api_path = first_existing_path(
+            directory / "lcomp64.dll", directory / "BIN" / "lcomp64.dll");
 #else
-        const auto wrapper_path = directory / "BIN" / "wlcomp.dll";
-        const auto api_path = directory / "BIN" / "lcomp.dll";
+        const auto wrapper_path = first_existing_path(
+            directory / "wlcomp.dll", directory / "BIN" / "wlcomp.dll");
+        const auto api_path = first_existing_path(
+            directory / "lcomp.dll", directory / "BIN" / "lcomp.dll");
 #endif
         HMODULE wrapper = LoadLibraryW(wrapper_path.c_str());
         if (wrapper == nullptr) {
