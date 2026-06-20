@@ -12,6 +12,10 @@
 #include <utility>
 #include <vector>
 
+#if NRPC_HAS_TLS
+#include "tls_transport.hpp"
+#endif
+
 namespace nrpc {
 namespace {
 
@@ -39,6 +43,23 @@ public:
           dispatcher_(dispatcher),
           resources_(resources),
           logger_(logger) {
+#if NRPC_HAS_TLS
+        const bool has_certificate = !config_.tls_certificate_path.empty();
+        const bool has_key = !config_.tls_private_key_path.empty();
+        if (has_certificate != has_key) {
+            throw std::invalid_argument(
+                "TLS requires both a certificate and a private key");
+        }
+        if (has_certificate) {
+            tls_context_ = std::make_unique<TlsContext>(
+                config_.tls_certificate_path, config_.tls_private_key_path);
+        }
+#else
+        if (!config_.tls_certificate_path.empty() ||
+            !config_.tls_private_key_path.empty()) {
+            throw std::runtime_error("this build has no mbedTLS support");
+        }
+#endif
         check_uv(uv_loop_init(&loop_), "uv_loop_init");
         server_.data = this;
         check_uv(uv_tcp_init(&loop_, &server_), "uv_tcp_init");
@@ -67,8 +88,15 @@ public:
         bound_port_ =
             network_to_host(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port);
         started_ = true;
-        logger_.log(LogLevel::info,
-                    concatenate("nRPC listening on ", config_.host, ':', bound_port_));
+        logger_.log(
+            LogLevel::info,
+            concatenate("nRPC listening on ", config_.host, ':', bound_port_,
+#if NRPC_HAS_TLS
+                        tls_context_ ? " (TLS)" : ""
+#else
+                        ""
+#endif
+                        ));
     }
 
     void run() { uv_run(&loop_, UV_RUN_DEFAULT); }
@@ -123,6 +151,7 @@ private:
         Connection* connection;
         std::vector<std::byte> bytes;
         bool close_after;
+        bool restart_request;
     };
 
     struct Connection {
@@ -136,6 +165,9 @@ private:
         bool timer_initialized{false};
         bool closing{false};
         bool response_sent{false};
+#if NRPC_HAS_TLS
+        std::unique_ptr<TlsSession> tls;
+#endif
 
         Connection(Impl* owner, ClientId client_id) : server(owner), id(client_id) {}
 
@@ -173,6 +205,18 @@ private:
                      &Impl::on_connection_closed);
             return;
         }
+#if NRPC_HAS_TLS
+        if (self.tls_context_) {
+            try {
+                connection->tls = self.tls_context_->create_session();
+            } catch (const std::exception& exception) {
+                self.logger_.log(LogLevel::warn,
+                                 concatenate("TLS session setup failed: ", exception.what()));
+                close_connection(*connection);
+                return;
+            }
+        }
+#endif
         self.logger_.log(LogLevel::info,
                          concatenate("client ", connection->id, " connected"));
         start_read(*connection);
@@ -211,8 +255,31 @@ private:
             return;
         }
         const auto* begin = reinterpret_cast<const std::byte*>(buffer->base);
-        connection.input.insert(connection.input.end(), begin,
-                                begin + static_cast<std::size_t>(count));
+#if NRPC_HAS_TLS
+        if (connection.tls) {
+            try {
+                connection.tls->receive(
+                    std::span(begin, static_cast<std::size_t>(count)));
+                connection.tls->handshake();
+                flush_tls_output(connection, false, false);
+                if (!connection.tls->established()) return;
+                auto plaintext = connection.tls->read_plaintext();
+                connection.input.insert(connection.input.end(), plaintext.begin(),
+                                        plaintext.end());
+            } catch (const std::exception& exception) {
+                connection.server->logger_.log(
+                    LogLevel::warn,
+                    concatenate("client ", connection.id, " TLS failed: ",
+                                exception.what()));
+                close_connection(connection);
+                return;
+            }
+        } else
+#endif
+        {
+            connection.input.insert(connection.input.end(), begin,
+                                    begin + static_cast<std::size_t>(count));
+        }
         process_input(connection);
     }
 
@@ -373,11 +440,33 @@ private:
                         " payload=", response.size() - protocol::header_size,
                         " status=", response_status));
 #endif
+#if NRPC_HAS_TLS
+        if (connection.tls) {
+            try {
+                connection.tls->write_plaintext(response);
+                flush_tls_output(connection, close_after, true);
+            } catch (const std::exception& exception) {
+                connection.server->logger_.log(
+                    LogLevel::warn,
+                    concatenate("client ", connection.id, " TLS write failed: ",
+                                exception.what()));
+                close_connection(connection);
+            }
+            return;
+        }
+#endif
+        queue_write(connection, std::move(response), close_after, true);
+    }
+
+    static void queue_write(Connection& connection, std::vector<std::byte> bytes,
+                            bool close_after, bool restart_request) {
+        if (bytes.empty()) return;
         auto* write = new Write{
             .request = {},
             .connection = &connection,
-            .bytes = std::move(response),
+            .bytes = std::move(bytes),
             .close_after = close_after,
+            .restart_request = restart_request,
         };
         write->request.data = write;
         connection.retain();
@@ -399,11 +488,19 @@ private:
         auto& connection = *write->connection;
         if (status < 0 || write->close_after) {
             close_connection(connection);
-        } else if (!connection.closing) {
+        } else if (write->restart_request && !connection.closing) {
             start_read(connection);
         }
         connection.release();
     }
+
+#if NRPC_HAS_TLS
+    static void flush_tls_output(Connection& connection, bool close_after,
+                                 bool restart_request) {
+        auto encrypted = connection.tls->take_encrypted_output();
+        queue_write(connection, std::move(encrypted), close_after, restart_request);
+    }
+#endif
 
     static void close_connection(Connection& connection) {
         if (connection.closing) {
@@ -445,6 +542,9 @@ private:
     Dispatcher& dispatcher_;
     ResourceManager& resources_;
     Logger& logger_;
+#if NRPC_HAS_TLS
+    std::unique_ptr<TlsContext> tls_context_;
+#endif
     uv_loop_t loop_{};
     uv_tcp_t server_{};
     ClientId next_client_id_{1};

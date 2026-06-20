@@ -126,6 +126,17 @@ Choose a different file with:
 ./build/nrpc_server 9000 --log-file /var/log/nrpc/server.log
 ```
 
+To encrypt nRPC client connections with mbedTLS, build with mbedTLS installed
+(or place its headers and libraries under `thirdparty` on Windows), then pass a
+server certificate and matching private key:
+
+```bash
+./build/nrpc_server 9000 --tls-cert server.crt --tls-key server.key
+```
+
+TLS is opt-in; without these two options the server continues to accept plain
+TCP connections. A TLS-enabled listener accepts TLS connections only.
+
 Each line is flushed immediately. Debug builds write complete `RX Request` and
 `TX Response` packet hex dumps to the same file.
 
