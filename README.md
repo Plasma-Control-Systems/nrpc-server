@@ -11,6 +11,7 @@ Dependencies:
 - C++23 compiler with `std::expected` support
 - libuv
 - LCard lcomp/wlcomp (optional; Windows only)
+- NI-DAQmx runtime (optional; Windows only, loaded dynamically)
 - GoogleTest (test builds only)
 
 Supported and continuously tested platforms:
@@ -136,6 +137,7 @@ The sample executable registers two mock functions:
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
 - `48` through `52`: Windows LCard lcomp/wlcomp backend
+- `64` through `74`: Windows NI-DAQmx backend
 
 The sleep backend exists to exercise worker isolation and timeout handling.
 
@@ -215,6 +217,37 @@ four-value reads, L791 paired DAC output, E140 dual DAC output, E154 8-bit DAC
 values, E2010's lack of asynchronous ADC input, and PCI C-only TTL direction
 configuration.
 
+## NI-DAQmx Backend
+
+The Windows-only NI-DAQmx backend loads `nicaiu.dll` at runtime, so building the
+server does not require NI headers or import libraries. Install the NI-DAQmx
+runtime on the machine that hosts the hardware. Tasks belong to the client that
+created them and are stopped and cleared automatically on close or disconnect.
+
+`register_nidaqmx_backend(dispatcher)` installs this function table:
+
+| Index | Operation | Arguments | Result |
+| ---: | --- | --- | --- |
+| 64 | Create AI voltage | `string channel`, `float64 min/max`, `int32 terminal` | `uint64 handle` |
+| 65 | Create AI thermocouple | channel, min/max, type, CJC source/value/channel | `uint64 handle` |
+| 66 | Create AO voltage | `string channel`, `float64 min/max` | `uint64 handle` |
+| 67 | Create digital input | `string lines`, `bool all-lines grouping` | `uint64 handle` |
+| 68 | Create digital output | `string lines`, `bool all-lines grouping` | `uint64 handle` |
+| 69 | Start task | `uint64 handle` | no variables |
+| 70 | Read analog | `uint64 handle`, `uint32 sample count` | `float64[] values` |
+| 71 | Write analog | `uint64 handle`, `float64[] values` | `uint32 samples written` |
+| 72 | Read digital | `uint64 handle`, `uint32 sample count` | `uint32[] values` |
+| 73 | Write digital | `uint64 handle`, `uint32[] values` | `uint32 samples written` |
+| 74 | Close task | `uint64 handle` | no variables |
+
+Terminal configuration values are default `-1`, RSE `10083`, NRSE `10078`,
+differential `10106`, and pseudodifferential `12529`. Thermocouple types use
+the NI-DAQmx values B `10047`, E `10055`, J `10072`, K `10073`, N `10077`,
+R `10082`, S `10085`, and T `10086`. CJC sources are built-in `10200`, constant
+`10116`, and channel `10113`. The request timeout is passed to all reads and
+writes. This subset creates on-demand, single-channel tasks; hardware-timed
+sampling and explicit clock configuration are outside its scope.
+
 ## Server API
 
 Register a backend with `nrpc::Dispatcher::register_handler`. A handler receives
@@ -290,6 +323,12 @@ Server-reserved error codes:
 | 4005 | LCard operation failed |
 | 4006 | LCard operation unsupported |
 | 4007 | LCard operation timed out |
+| 5001 | Invalid NI-DAQmx backend arguments |
+| 5002 | NI-DAQmx runtime load failed |
+| 5003 | NI-DAQmx task/channel creation failed |
+| 5004 | Invalid or foreign NI-DAQmx task handle |
+| 5005 | NI-DAQmx operation failed |
+| 5006 | Operation does not match task channel type |
 
 Backend error codes otherwise pass through unchanged. The Python client raises
 `RemoteError` for server/backend failures and `ProtocolError` for malformed

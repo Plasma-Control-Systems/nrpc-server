@@ -22,6 +22,11 @@ option(
     ON
 )
 option(
+    NRPC_ENABLE_NIDAQMX_BACKEND
+    "Build the Windows NI-DAQmx backend"
+    ON
+)
+option(
     NRPC_FETCH_GTEST
     "Download GoogleTest with FetchContent when tests are enabled and no package is installed"
     ON
@@ -122,6 +127,10 @@ if(NRPC_ENABLE_LCARD_BACKEND)
         set(NRPC_ENABLE_LCARD_BACKEND OFF)
     endif()
 endif()
+if(NRPC_ENABLE_NIDAQMX_BACKEND AND NOT WIN32)
+    message(STATUS "NI-DAQmx is Windows-only; building without the NI-DAQmx backend")
+    set(NRPC_ENABLE_NIDAQMX_BACKEND OFF)
+endif()
 
 function(nrpc_enable_warnings target)
     if(MSVC)
@@ -154,6 +163,9 @@ endif()
 if(NRPC_ENABLE_LCARD_BACKEND)
     target_sources(nrpc PRIVATE src/lcard_backend.cpp)
 endif()
+if(NRPC_ENABLE_NIDAQMX_BACKEND)
+    target_sources(nrpc PRIVATE src/nidaqmx_backend.cpp)
+endif()
 target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
 if(NRPC_ENABLE_SERIAL_BACKEND)
@@ -169,6 +181,11 @@ if(NRPC_ENABLE_LCARD_BACKEND)
     )
 else()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_LCARD_BACKEND=0)
+endif()
+if(NRPC_ENABLE_NIDAQMX_BACKEND)
+    target_compile_definitions(nrpc PUBLIC NRPC_HAS_NIDAQMX_BACKEND=1)
+else()
+    target_compile_definitions(nrpc PUBLIC NRPC_HAS_NIDAQMX_BACKEND=0)
 endif()
 if(WIN32)
     target_link_libraries(nrpc PUBLIC ws2_32)
