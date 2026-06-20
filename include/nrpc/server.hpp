@@ -18,6 +18,9 @@ struct ServerConfig {
     std::uint32_t max_payload_size{protocol::default_max_payload_size};
     std::size_t arena_size{1024U * 1024U};
     int backlog{128};
+    // TLS is enabled when both paths are set. PEM and DER files are accepted.
+    std::string tls_certificate_path;
+    std::string tls_private_key_path;
 };
 
 class Server {

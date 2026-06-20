@@ -27,6 +27,11 @@ option(
     ON
 )
 option(
+    NRPC_ENABLE_TLS
+    "Build optional TLS server support using mbedTLS"
+    ON
+)
+option(
     NRPC_FETCH_GTEST
     "Download GoogleTest with FetchContent when tests are enabled and no package is installed"
     ON
@@ -152,6 +157,52 @@ add_library(nrpc
     src/server.cpp
     src/tcp_backend.cpp
 )
+if(NRPC_ENABLE_TLS)
+    if(WIN32)
+        find_path(NRPC_MBEDTLS_INCLUDE_DIR NAMES mbedtls/ssl.h PATHS "${NRPC_THIRDPARTY_INCLUDE_DIR}" NO_DEFAULT_PATH)
+        find_library(NRPC_MBEDTLS_LIBRARY NAMES mbedtls PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}" NO_DEFAULT_PATH)
+        find_library(NRPC_MBEDX509_LIBRARY NAMES mbedx509 PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}" NO_DEFAULT_PATH)
+        find_library(NRPC_MBEDCRYPTO_LIBRARY NAMES mbedcrypto PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}" NO_DEFAULT_PATH)
+        if(NRPC_MBEDTLS_INCLUDE_DIR AND NRPC_MBEDTLS_LIBRARY AND NRPC_MBEDX509_LIBRARY AND NRPC_MBEDCRYPTO_LIBRARY)
+            add_library(nrpc_mbedtls INTERFACE)
+            target_include_directories(nrpc_mbedtls INTERFACE "${NRPC_MBEDTLS_INCLUDE_DIR}")
+            target_link_libraries(
+                nrpc_mbedtls INTERFACE
+                "${NRPC_MBEDTLS_LIBRARY}"
+                "${NRPC_MBEDX509_LIBRARY}"
+                "${NRPC_MBEDCRYPTO_LIBRARY}"
+                bcrypt
+            )
+            set(NRPC_MBEDTLS_TARGET nrpc_mbedtls)
+        else()
+            message(STATUS "mbedTLS not found in ${NRPC_THIRDPARTY_DIR}; building without TLS")
+            set(NRPC_ENABLE_TLS OFF)
+        endif()
+    else()
+        find_package(MbedTLS QUIET)
+        if(TARGET MbedTLS::mbedtls)
+            set(NRPC_MBEDTLS_TARGET MbedTLS::mbedtls)
+        else()
+            find_package(PkgConfig QUIET)
+            if(PkgConfig_FOUND)
+                pkg_check_modules(
+                    MBEDTLS QUIET IMPORTED_TARGET
+                    mbedtls mbedx509 mbedcrypto
+                )
+            endif()
+            if(TARGET PkgConfig::MBEDTLS)
+                set(NRPC_MBEDTLS_TARGET PkgConfig::MBEDTLS)
+            else()
+                message(STATUS "mbedTLS not found; building without TLS")
+                set(NRPC_ENABLE_TLS OFF)
+            endif()
+        endif()
+    endif()
+endif()
+if(NRPC_ENABLE_TLS)
+    target_sources(nrpc PRIVATE src/tls_transport.cpp)
+    target_link_libraries(nrpc PRIVATE ${NRPC_MBEDTLS_TARGET})
+endif()
 if(NRPC_ENABLE_SERIAL_BACKEND)
     target_sources(nrpc PRIVATE src/serial_backend.cpp)
     if(WIN32)
@@ -168,6 +219,7 @@ if(NRPC_ENABLE_NIDAQMX_BACKEND)
 endif()
 target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
+target_compile_definitions(nrpc PUBLIC NRPC_HAS_TLS=$<BOOL:${NRPC_ENABLE_TLS}>)
 if(NRPC_ENABLE_SERIAL_BACKEND)
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=1)
 else()

@@ -27,6 +27,8 @@
 int main(int argc, char** argv) {
     std::uint16_t port = 9000;
     std::filesystem::path log_path{"nrpc.log"};
+    std::filesystem::path tls_certificate;
+    std::filesystem::path tls_private_key;
     bool port_seen = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
@@ -38,12 +40,26 @@ int main(int argc, char** argv) {
             log_path = argv[index];
             continue;
         }
+        if (argument == "--tls-cert" || argument == "--tls-key") {
+            if (++index >= argc) {
+                std::cerr << "missing path after " << argument << '\n';
+                return 2;
+            }
+            if (argument == "--tls-cert") {
+                tls_certificate = argv[index];
+            } else {
+                tls_private_key = argv[index];
+            }
+            continue;
+        }
         if (argument == "--help" || argument == "-h") {
-            std::cout << "usage: nrpc_server [port] [--log-file PATH]\n";
+            std::cout << "usage: nrpc_server [port] [--log-file PATH] "
+                         "[--tls-cert PATH --tls-key PATH]\n";
             return 0;
         }
         if (port_seen) {
-            std::cerr << "usage: nrpc_server [port] [--log-file PATH]\n";
+            std::cerr << "usage: nrpc_server [port] [--log-file PATH] "
+                         "[--tls-cert PATH --tls-key PATH]\n";
             return 2;
         }
         const auto result = std::from_chars(
@@ -54,6 +70,11 @@ int main(int argc, char** argv) {
             return 2;
         }
         port_seen = true;
+    }
+
+    if (tls_certificate.empty() != tls_private_key.empty()) {
+        std::cerr << "--tls-cert and --tls-key must be provided together\n";
+        return 2;
     }
 
     std::ofstream log_file(log_path, std::ios::app);
@@ -123,7 +144,11 @@ int main(int argc, char** argv) {
         });
 
     try {
-        nrpc::Server server({.port = port}, dispatcher, resources, logger);
+        nrpc::Server server(
+            {.port = port,
+             .tls_certificate_path = tls_certificate.string(),
+             .tls_private_key_path = tls_private_key.string()},
+            dispatcher, resources, logger);
         server.start();
         server.run();
     } catch (const std::exception& exception) {
