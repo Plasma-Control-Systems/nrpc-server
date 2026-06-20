@@ -111,50 +111,6 @@ else()
     endif()
 endif()
 
-if(NRPC_ENABLE_SERIAL_BACKEND AND NOT WIN32)
-    find_package(libserialport CONFIG QUIET)
-    if(TARGET unofficial::libserialport::libserialport)
-        set(NRPC_LIBSERIALPORT_TARGET unofficial::libserialport::libserialport)
-    elseif(TARGET libserialport::libserialport)
-        set(NRPC_LIBSERIALPORT_TARGET libserialport::libserialport)
-    elseif(TARGET serialport)
-        set(NRPC_LIBSERIALPORT_TARGET serialport)
-    else()
-        if(NOT PkgConfig_FOUND)
-            find_package(PkgConfig QUIET)
-        endif()
-        if(PkgConfig_FOUND)
-            pkg_check_modules(LIBSERIALPORT QUIET IMPORTED_TARGET libserialport)
-        endif()
-        if(TARGET PkgConfig::LIBSERIALPORT)
-            set(NRPC_LIBSERIALPORT_TARGET PkgConfig::LIBSERIALPORT)
-        else()
-            find_path(LIBSERIALPORT_INCLUDE_DIR libserialport.h)
-            find_library(
-                LIBSERIALPORT_LIBRARY
-                NAMES serialport libserialport
-            )
-            if(LIBSERIALPORT_INCLUDE_DIR AND LIBSERIALPORT_LIBRARY)
-                add_library(nrpc_libserialport UNKNOWN IMPORTED)
-                set_target_properties(
-                    nrpc_libserialport PROPERTIES
-                    IMPORTED_LOCATION "${LIBSERIALPORT_LIBRARY}"
-                    INTERFACE_INCLUDE_DIRECTORIES
-                        "${LIBSERIALPORT_INCLUDE_DIR}"
-                )
-                set(NRPC_LIBSERIALPORT_TARGET nrpc_libserialport)
-            endif()
-        endif()
-    endif()
-    if(NOT NRPC_LIBSERIALPORT_TARGET)
-        message(
-            WARNING
-            "libserialport was not found; building without the serial backend"
-        )
-        set(NRPC_ENABLE_SERIAL_BACKEND OFF)
-    endif()
-endif()
-
 if(NRPC_ENABLE_LCARD_BACKEND)
     if(
         NOT WIN32
@@ -192,7 +148,7 @@ if(NRPC_ENABLE_SERIAL_BACKEND)
     if(WIN32)
         target_sources(nrpc PRIVATE src/serial_port_win32.cpp)
     else()
-        target_sources(nrpc PRIVATE src/serial_port_libserialport.cpp)
+        target_sources(nrpc PRIVATE src/serial_port_posix.cpp)
     endif()
 endif()
 if(NRPC_ENABLE_LCARD_BACKEND)
@@ -201,9 +157,6 @@ endif()
 target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
 if(NRPC_ENABLE_SERIAL_BACKEND)
-    if(NOT WIN32)
-        target_link_libraries(nrpc PUBLIC ${NRPC_LIBSERIALPORT_TARGET})
-    endif()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=1)
 else()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_SERIAL_BACKEND=0)

@@ -10,7 +10,6 @@ Dependencies:
 - CMake 3.20 or newer
 - C++23 compiler with `std::expected` support
 - libuv
-- libserialport (optional on Unix; required for the Unix serial backend)
 - LCard lcomp/wlcomp (optional; Windows only)
 - GoogleTest (test builds only)
 
@@ -43,9 +42,9 @@ override it with `-DNRPC_LCARD_LIBRARY_DIR=...`, disable it with
 runtime.
 
 On Linux and macOS, the build accepts libuv through a CMake config package or
-through `pkg-config`. On Unix, if libserialport is not available, the server
-builds without functions 32 through 35; pass
-`-DNRPC_ENABLE_SERIAL_BACKEND=OFF` to select that configuration explicitly.
+through `pkg-config`. Serial support uses the native POSIX `termios` API and
+requires no external serial library. Pass `-DNRPC_ENABLE_SERIAL_BACKEND=OFF`
+to build without functions 32 through 35.
 Compiler warning flags are selected separately for MSVC and GCC/Clang.
 When tests are enabled, CMake first looks for an installed `GTest::gtest_main`
 package and otherwise downloads GoogleTest into the build tree with
@@ -166,8 +165,8 @@ by another client.
 ## Serial Backend
 
 The serial backend uses native Win32 serial handles for COM ports on Windows
-and [libserialport](https://sigrok.org/wiki/Libserialport) for Unix serial
-devices. Blocking operations execute in the libuv worker pool, and handles are
+and POSIX `termios` file descriptors on Linux and macOS. Blocking operations
+execute in the libuv worker pool, and handles are
 automatically closed when their owning nRPC client disconnects.
 
 `register_serial_backend(dispatcher)` installs this function table:
@@ -182,6 +181,9 @@ automatically closed when their owning nRPC client disconnects.
 The four open settings are data bits, parity, stop bits, and flow control.
 Parity codes are none `0`, odd `1`, even `2`, mark `3`, and space `4`. Flow
 control codes are none `0`, software `1`, RTS/CTS `2`, and DTR/DSR `3`.
+The POSIX backend accepts baud rates exposed by the host's `termios` API.
+Platform-specific modes that `termios` cannot represent return error `3008`;
+this includes DTR/DSR flow control and, on macOS, mark/space parity.
 
 ## LCard Backend
 

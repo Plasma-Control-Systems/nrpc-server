@@ -23,11 +23,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libuv1-dev libserialport-dev libgtest-dev ninja-build
+          sudo apt-get install --yes libuv1-dev libgtest-dev ninja-build
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install libuv libserialport googletest ninja
+        run: brew install libuv googletest ninja
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'

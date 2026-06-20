@@ -13,6 +13,9 @@ if(WIN32 AND NRPC_ENABLE_SERIAL_BACKEND)
     target_sources(nrpc_tests PRIVATE serial_port_win32_test.cpp)
     target_include_directories(nrpc_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()
+if(NOT WIN32 AND NRPC_ENABLE_SERIAL_BACKEND)
+    target_sources(nrpc_tests PRIVATE serial_port_posix_test.cpp)
+endif()
 target_link_libraries(nrpc_tests PRIVATE nrpc GTest::gtest_main)
 nrpc_enable_warnings(nrpc_tests)
 install(TARGETS nrpc_tests RUNTIME DESTINATION tests COMPONENT tests)
@@ -49,28 +52,12 @@ if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
 endif()
 
 if(NOT WIN32 AND NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
-    add_executable(
-        nrpc_serial_test_server
-        ${PROJECT_SOURCE_DIR}/src/main.cpp
-        fake_serialport.cpp
-    )
-    target_link_libraries(nrpc_serial_test_server PRIVATE nrpc)
-    nrpc_enable_warnings(nrpc_serial_test_server)
-    target_compile_definitions(
-        nrpc_serial_test_server PRIVATE $<$<CONFIG:Debug>:DEBUG>
-    )
-    install(
-        TARGETS nrpc_serial_test_server
-        RUNTIME DESTINATION tests
-        COMPONENT tests
-    )
-
     add_test(
         NAME integration.serial_backend
         COMMAND
             ${CMAKE_COMMAND} -E env
             PYTHONPATH=${NRPC_PYTHON_CLIENT_SOURCE_DIR}
-            NRPC_SERIAL_TEST_SERVER=$<TARGET_FILE:nrpc_serial_test_server>
+            NRPC_SERIAL_TEST_SERVER=$<TARGET_FILE:nrpc_server>
             SERIAL_SCPI_EXAMPLE=${NRPC_PYTHON_CLIENT_SOURCE_DIR}/examples/serial_scpi.py
             ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/serial_backend_e2e_test.py
