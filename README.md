@@ -5,114 +5,127 @@ C++23 nRPC server built on libuv. The wire format and behavior follow
 
 ## Build
 
-Dependencies:
+The project requires CMake 3.20 or newer, a C++23 compiler with
+`std::expected`, and libuv. mbedTLS is optional and enables TLS connections.
+GoogleTest is needed only when `BUILD_TESTING=ON`.
 
-- CMake 3.20 or newer
-- C++23 compiler with `std::expected` support
-- libuv
-- LCard lcomp/wlcomp (optional; Windows only)
-- NI-DAQmx runtime (optional; Windows only, loaded dynamically)
-- GoogleTest (test builds only)
+### Windows
 
-Supported and continuously tested platforms:
+Install Visual Studio 2022 Build Tools (or Visual Studio 2022) with the
+**Desktop development with C++** workload. Build all libraries for the same
+architecture as the server; the commands below use 64-bit libraries.
 
-- Linux with GCC
-- macOS with AppleClang
-- Windows with MSVC and Winsock 2
-
-On Windows, dependencies are read from a local `thirdparty` directory instead
-of a package manager. This folder is for application/runtime dependencies, not
-test-only libraries:
+Windows dependencies are discovered under `thirdparty` by default. At minimum,
+copy the libuv headers and library into this layout:
 
 ```text
 thirdparty/
   include/
     uv.h
+    uv/...
   libs/
-    uv_a.lib            # or libuv_a.lib / libuv.lib / uv.lib
-    wlcomp64.dll        # optional, for runtime LCard access
-    lcomp64.dll         # optional, for runtime LCard access
+    libuv.lib           # uv_a.lib, libuv_a.lib, or uv.lib also work
 ```
 
-Use `-DNRPC_THIRDPARTY_DIR=...` if the folder is not under the repository root.
-Windows serial support uses native Win32 APIs without an external serial
-dependency. The LCard backend is built on Windows and loads `wlcomp`/`lcomp`
-at runtime from `C:\Program Files (x86)\LCard\LIBRARY\BIN` by default;
-override it with `-DNRPC_LCARD_LIBRARY_DIR=...`, disable it with
-`-DNRPC_ENABLE_LCARD_BACKEND=OFF`, or set `NRPC_LCARD_LIBRARY_DIR` at
-runtime.
+To include TLS support, add the mbedTLS headers and its three libraries:
 
-On Linux and macOS, the build accepts libuv through a CMake config package or
-through `pkg-config`. Serial support uses the native POSIX `termios` API and
-requires no external serial library. Pass `-DNRPC_ENABLE_SERIAL_BACKEND=OFF`
-to build without functions 32 through 35.
-Compiler warning flags are selected separately for MSVC and GCC/Clang.
-When tests are enabled, CMake first looks for an installed `GTest::gtest_main`
-package and otherwise downloads GoogleTest into the build tree with
-FetchContent. Disable that fallback with `-DNRPC_FETCH_GTEST=OFF`.
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+```text
+thirdparty/
+  include/
+    mbedtls/...
+    psa/...
+  libs/
+    mbedtls.lib
+    mbedx509.lib
+    mbedcrypto.lib
 ```
 
-A Debug build defines `DEBUG`, enabling full request and response hex dumps.
-libuv's worker count can be selected before startup with `UV_THREADPOOL_SIZE`.
+Configure, build, and test from a Developer PowerShell prompt:
 
-### Release Build
+```powershell
+cmake -S . -B build-windows -A x64 -DBUILD_TESTING=ON
+cmake --build build-windows --config Debug --parallel
+ctest --test-dir build-windows -C Debug --output-on-failure
+```
 
-For Ninja, Unix Makefiles, and other single-configuration generators:
+The executable is `build-windows\Debug\nrpc_server.exe`. If mbedTLS is not in
+`thirdparty`, CMake prints a status message and builds the plaintext transport.
+Use `-DNRPC_THIRDPARTY_DIR=C:\path\to\dependencies` to select another dependency
+directory.
+
+Create an optimized build without tests as follows:
+
+```powershell
+cmake -S . -B build-windows-release -A x64 -DBUILD_TESTING=OFF
+cmake --build build-windows-release --config Release --parallel
+.\build-windows-release\Release\nrpc_server.exe 9000
+```
+
+The LCard and NI-DAQmx backends are Windows-only. They load their vendor DLLs
+at runtime, so vendor headers and import libraries are not required to compile
+the server. LCard DLLs are loaded from
+`C:\Program Files (x86)\LCard\LIBRARY\BIN` by default; change this with
+`-DNRPC_LCARD_LIBRARY_DIR=...`. NI-DAQmx requires `nicaiu.dll` from an installed
+NI-DAQmx runtime on the target machine.
+
+### Linux (Ubuntu/Debian)
+
+Install the compiler and development packages:
 
 ```sh
-cmake -S . -B build-release \
+sudo apt update
+sudo apt install build-essential cmake pkg-config libuv1-dev libmbedtls-dev libgtest-dev
+```
+
+Configure, build, and test:
+
+```sh
+cmake -S . -B build-linux \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DNRPC_FETCH_GTEST=OFF
+cmake --build build-linux --parallel
+ctest --test-dir build-linux --output-on-failure
+```
+
+The executable is `build-linux/nrpc_server`. CMake discovers libuv and mbedTLS
+through their CMake packages or `pkg-config`. Linux serial support uses the
+native POSIX `termios` API and needs no additional serial library. The Windows
+LCard and NI-DAQmx backends are disabled automatically.
+
+Create an optimized build without tests as follows:
+
+```sh
+cmake -S . -B build-linux-release \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=OFF
-cmake --build build-release --parallel
+cmake --build build-linux-release --parallel
+./build-linux-release/nrpc_server 9000
 ```
 
-Run the optimized server:
+### Build options
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `BUILD_TESTING` | `ON` | Build the C++ test suite |
+| `NRPC_FETCH_GTEST` | `ON` | Download GoogleTest when no installed package is found |
+| `NRPC_ENABLE_TLS` | `ON` | Build TLS support when mbedTLS is available |
+| `NRPC_ENABLE_SERIAL_BACKEND` | `ON` | Build serial functions 32 through 35 |
+| `NRPC_ENABLE_LCARD_BACKEND` | `ON` | Build the Windows LCard backend |
+| `NRPC_ENABLE_NIDAQMX_BACKEND` | `ON` | Build the Windows NI-DAQmx backend |
+
+A Debug build enables complete request and response hex dumps. Release builds
+retain `ERROR`, `WARN`, and `INFO` logging but omit those dumps. Set
+`UV_THREADPOOL_SIZE` before starting the server to change libuv's worker count.
+
+To install only the server executable into a staging directory:
 
 ```sh
-./build-release/nrpc_server 9000
-```
-
-For Visual Studio on Windows, select the configuration when building:
-
-```powershell
-cmake -S . -B build-release -A x64 -DBUILD_TESTING=OFF
-cmake --build build-release --config Release --parallel
-.\build-release\Release\nrpc_server.exe 9000
-```
-
-Create a runtime artifact that contains only the server executable:
-
-```powershell
-cmake --install build-release --config Release `
-  --prefix artifacts\nrpc-runtime `
+cmake --install build-linux-release \
+  --prefix artifacts/nrpc-runtime \
   --component runtime
 ```
 
-Build tests as a separate artifact so GoogleTest remains a build/test
-dependency and is not part of the shipped application:
-
-```powershell
-cmake -S . -B build-tests -A x64 -DBUILD_TESTING=ON
-cmake --build build-tests --config Debug --parallel
-ctest --test-dir build-tests --build-config Debug --output-on-failure
-cmake --install build-tests --config Debug `
-  --prefix artifacts\nrpc-tests `
-  --component tests
-```
-
-To test the Release configuration, omit `-DBUILD_TESTING=OFF` and run:
-
-```sh
-ctest --test-dir build-release --build-config Release --output-on-failure
-```
-
-Release builds retain `ERROR`, `WARN`, and `INFO` logging but omit Debug packet
-hex dumps.
+With a Visual Studio build, add `--config Release` to the install command.
 
 ## Run
 
