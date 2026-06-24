@@ -65,7 +65,10 @@ The LCard and NI-DAQmx backends are Windows-only. They load their vendor DLLs
 at runtime, so vendor headers and import libraries are not required to compile
 the server. LCard DLLs are loaded from
 `C:\Program Files (x86)\LCard\LIBRARY\BIN` by default; change this with
-`-DNRPC_LCARD_LIBRARY_DIR=...`. NI-DAQmx requires `nicaiu.dll` from an installed
+`-DNRPC_LCARD_LIBRARY_DIR=...`. When a client opens an LCard board without an
+explicit BIOS path, the server searches
+`C:\Program Files (x86)\LCard\LIBRARY\BIOS` by default; change this with
+`-DNRPC_LCARD_BIOS_DIR=...`. NI-DAQmx requires `nicaiu.dll` from an installed
 NI-DAQmx runtime on the target machine.
 
 ### Linux (Ubuntu/Debian)
@@ -111,6 +114,7 @@ cmake --build build-linux-release --parallel
 | `NRPC_ENABLE_TLS` | `ON` | Build TLS support when mbedTLS is available |
 | `NRPC_ENABLE_SERIAL_BACKEND` | `ON` | Build serial functions 32 through 35 |
 | `NRPC_ENABLE_LCARD_BACKEND` | `ON` | Build the Windows LCard backend |
+| `NRPC_LCARD_BIOS_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIOS` | Default LCard BIOS/PLD lookup directory |
 | `NRPC_ENABLE_NIDAQMX_BACKEND` | `ON` | Build the Windows NI-DAQmx backend |
 
 A Debug build enables complete request and response hex dumps. Release builds
@@ -232,14 +236,17 @@ The server rejects open when the physical slot's `BoardType` differs from the
 requested type. Supported values are PCI A `5`, PCI B `6`, PCI C `14`, L791
 `19`, E440 `30`, E140 `31`, E2010 `32`, E154 `38`, E2010B `39`, and E310 `77`.
 
-The BIOS path may be empty during open. IoAsync operation codes follow wlcomp:
-ADC configure `3`, TTL configure `4`, DAC configure `5`, ADC input `6`, TTL
-input `7`, TTL output `8`, DAC output `9`, and frequency input `10`. Channels
-and data are `uint32` arrays with at most 128 elements. The server validates
-device-specific layouts before calling wlcomp, including E310 ADC masks and
-four-value reads, L791 paired DAC output, E140 dual DAC output, E154 8-bit DAC
-values, E2010's lack of asynchronous ADC input, and PCI C-only TTL direction
-configuration.
+The BIOS path may be empty during open. In that case the native Windows driver
+looks for a board-matching `.bio`, `.pld`, or `.bin` file in the default BIOS
+directory and loads it automatically when found. Set `NRPC_LCARD_BIOS_DIR` in
+the server environment, or configure `-DNRPC_LCARD_BIOS_DIR=...`, to use a
+different directory. IoAsync operation codes follow wlcomp: ADC configure `3`,
+TTL configure `4`, DAC configure `5`, ADC input `6`, TTL input `7`, TTL output
+`8`, DAC output `9`, and frequency input `10`. Channels and data are `uint32`
+arrays with at most 128 elements. The server validates device-specific layouts
+before calling wlcomp, including E310 ADC masks and four-value reads, L791
+paired DAC output, E140 dual DAC output, E154 8-bit DAC values, E2010's lack of
+asynchronous ADC input, and PCI C-only TTL direction configuration.
 
 ## NI-DAQmx Backend
 

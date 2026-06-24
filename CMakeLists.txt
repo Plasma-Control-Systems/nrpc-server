@@ -46,6 +46,11 @@ set(
     "C:/Program Files (x86)/LCard/LIBRARY/BIN"
     CACHE PATH "Path to the LCard lcomp/wlcomp runtime DLL directory"
 )
+set(
+    NRPC_LCARD_BIOS_DIR
+    "C:/Program Files (x86)/LCard/LIBRARY/BIOS"
+    CACHE PATH "Path to the default LCard BIOS and PLD directory"
+)
 if(NRPC_ENABLE_PYTHON_INTEGRATION_TESTS)
     if(
         NOT NRPC_PYTHON_CLIENT_SOURCE_DIR
@@ -230,6 +235,7 @@ if(NRPC_ENABLE_LCARD_BACKEND)
         nrpc PUBLIC NRPC_HAS_LCARD_BACKEND=1
         PRIVATE
             NRPC_LCARD_LIBRARY_DIR="${NRPC_LCARD_LIBRARY_DIR}"
+            NRPC_LCARD_BIOS_DIR="${NRPC_LCARD_BIOS_DIR}"
     )
 else()
     target_compile_definitions(nrpc PUBLIC NRPC_HAS_LCARD_BACKEND=0)

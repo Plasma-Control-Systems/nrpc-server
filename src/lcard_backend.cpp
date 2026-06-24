@@ -1,10 +1,15 @@
 #include "nrpc/lcard_backend.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
+#include <cctype>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -317,6 +322,19 @@ std::filesystem::path lcard_library_directory() {
     return NRPC_LCARD_LIBRARY_DIR;
 }
 
+std::filesystem::path lcard_bios_directory() {
+    const auto length =
+        GetEnvironmentVariableW(L"NRPC_LCARD_BIOS_DIR", nullptr, 0);
+    if (length != 0) {
+        std::wstring override_path(length, L'\0');
+        GetEnvironmentVariableW(
+            L"NRPC_LCARD_BIOS_DIR", override_path.data(), length);
+        override_path.resize(length - 1U);
+        return override_path;
+    }
+    return NRPC_LCARD_BIOS_DIR;
+}
+
 std::filesystem::path first_existing_path(
     const std::filesystem::path& first,
     const std::filesystem::path& fallback) {
@@ -324,6 +342,98 @@ std::filesystem::path first_existing_path(
         return first;
     }
     return fallback;
+}
+
+std::string lower_ascii(std::string value) {
+    std::ranges::transform(value, value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+bool is_lcard_bios_file(const std::filesystem::path& path) {
+    const auto extension = lower_ascii(path.extension().string());
+    return extension == ".bio" || extension == ".pld" || extension == ".bin";
+}
+
+std::span<const std::string_view> automatic_bios_candidates(
+    LCardBoardType board) {
+    using namespace std::literals;
+
+    static constexpr std::array pci_a{"pci_a"sv, "pc_a"sv, "pci"sv};
+    static constexpr std::array pci_b{"pci_b"sv, "pc_b"sv, "pci"sv};
+    static constexpr std::array pci_c{"pci_c"sv, "pc_c"sv, "pci"sv};
+    static constexpr std::array l791{"l791"sv};
+    static constexpr std::array e440{"e440"sv};
+    static constexpr std::array e140{"e140"sv, "l761"sv};
+    static constexpr std::array e2010{"e2010"sv};
+    static constexpr std::array e154{"e154"sv};
+    static constexpr std::array e2010b{"e2010b"sv, "e2010"sv};
+    static constexpr std::array e310{"e310"sv};
+
+    switch (board) {
+        case LCardBoardType::pci_a:
+            return pci_a;
+        case LCardBoardType::pci_b:
+            return pci_b;
+        case LCardBoardType::pci_c:
+            return pci_c;
+        case LCardBoardType::l791:
+            return l791;
+        case LCardBoardType::e440:
+            return e440;
+        case LCardBoardType::e140:
+            return e140;
+        case LCardBoardType::e2010:
+            return e2010;
+        case LCardBoardType::e154:
+            return e154;
+        case LCardBoardType::e2010b:
+            return e2010b;
+        case LCardBoardType::e310:
+            return e310;
+    }
+    return {};
+}
+
+std::optional<std::filesystem::path> automatic_bios_path(
+    LCardBoardType board) {
+    using namespace std::literals;
+
+    const auto directory = lcard_bios_directory();
+    std::error_code error;
+    if (!std::filesystem::is_directory(directory, error)) {
+        return std::nullopt;
+    }
+
+    const auto candidates = automatic_bios_candidates(board);
+    for (const auto candidate : candidates) {
+        for (const auto extension : {".bio"sv, ".pld"sv, ".bin"sv}) {
+            const auto path =
+                directory /
+                (std::string(candidate) + std::string(extension));
+            if (std::filesystem::is_regular_file(path, error)) {
+                return path;
+            }
+        }
+    }
+
+    for (const auto& entry :
+         std::filesystem::directory_iterator(directory, error)) {
+        if (error || !entry.is_regular_file(error) ||
+            !is_lcard_bios_file(entry.path())) {
+            continue;
+        }
+        const auto stem = lower_ascii(entry.path().stem().string());
+        const auto filename = lower_ascii(entry.path().filename().string());
+        for (const auto candidate : candidates) {
+            if (stem == candidate ||
+                filename.find(candidate) != std::string::npos) {
+                return entry.path();
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 template <typename Function>
@@ -549,8 +659,16 @@ public:
                     ", expected " +
                     std::to_string(static_cast<std::uint32_t>(expected_board))});
         }
-        if (!bios_path.empty()) {
-            if (auto loaded = session->load_bios(bios_path); !loaded) {
+        std::optional<std::filesystem::path> discovered_bios;
+        std::string bios_to_load(bios_path);
+        if (bios_to_load.empty()) {
+            discovered_bios = automatic_bios_path(expected_board);
+            if (discovered_bios) {
+                bios_to_load = discovered_bios->string();
+            }
+        }
+        if (!bios_to_load.empty()) {
+            if (auto loaded = session->load_bios(bios_to_load); !loaded) {
                 return std::unexpected(loaded.error());
             }
         }
