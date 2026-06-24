@@ -247,6 +247,9 @@ arrays with at most 128 elements. The server validates device-specific layouts
 before calling wlcomp, including E310 ADC masks and four-value reads, L791
 paired DAC output, E140 dual DAC output, E154 8-bit DAC values, E2010's lack of
 asynchronous ADC input, and PCI C-only TTL direction configuration.
+For E140 and E440 asynchronous ADC input, the single channel value may include
+LCard channel mode bits: differential `0`, zero calibration `16`, or
+single-ended/common-ground `32`.
 
 ## NI-DAQmx Backend
 
