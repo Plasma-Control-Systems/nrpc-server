@@ -66,6 +66,7 @@ struct LCardAsyncParameters {
     std::uint32_t channel_count;
     std::span<const std::uint32_t> channels;
     std::span<const std::uint32_t> data;
+    std::uint32_t timeout_ms;
 };
 
 struct LCardAsyncResult {

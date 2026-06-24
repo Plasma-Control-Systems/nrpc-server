@@ -227,7 +227,7 @@ disconnect.
 | Index | Operation | Arguments | Result |
 | ---: | --- | --- | --- |
 | 48 | Open | `uint32 slot`, `uint32 board type`, `string BIOS path` | `uint64 handle` |
-| 49 | IoAsync | handle, operation, rate, mode, count/mask, channels, data | actual rate, data |
+| 49 | LCard I/O | handle, operation, rate, mode, count, channels, data | actual rate, data |
 | 50 | Slot info | `uint64 handle` | board type, DSP type, IRQ |
 | 51 | Load BIOS | `uint64 handle`, `string path` | no variables |
 | 52 | Close | `uint64 handle` | no variables |
@@ -238,18 +238,22 @@ requested type. Supported values are PCI A `5`, PCI B `6`, PCI C `14`, L791
 
 The BIOS path may be empty during open. In that case the native Windows driver
 looks for a board-matching `.bio`, `.pld`, or `.bin` file in the default BIOS
-directory and loads it automatically when found. Set `NRPC_LCARD_BIOS_DIR` in
-the server environment, or configure `-DNRPC_LCARD_BIOS_DIR=...`, to use a
-different directory. IoAsync operation codes follow wlcomp: ADC configure `3`,
-TTL configure `4`, DAC configure `5`, ADC input `6`, TTL input `7`, TTL output
-`8`, DAC output `9`, and frequency input `10`. Channels and data are `uint32`
-arrays with at most 128 elements. The server validates device-specific layouts
-before calling wlcomp, including E310 ADC masks and four-value reads, L791
-paired DAC output, E140 dual DAC output, E154 8-bit DAC values, E2010's lack of
-asynchronous ADC input, and PCI C-only TTL direction configuration.
-For E140 and E440 asynchronous ADC input, the single channel value may include
-LCard channel mode bits: differential `0`, zero calibration `16`, or
-single-ended/common-ground `32`.
+directory and attempts to load it automatically when found. Automatic BIOS
+loading is best-effort because some boards or driver states reject `LoadBios`
+when firmware is already initialized or not required; an explicit BIOS path
+still fails open if `LoadBios` fails. Set `NRPC_LCARD_BIOS_DIR` in the server
+environment, or configure `-DNRPC_LCARD_BIOS_DIR=...`, to use a different
+directory. Function `49` supports ADC input `6` through the vendor stream
+pipeline (`RequestBufferStream`, `FillDAQparameters`, `SetParametersStream`,
+`InitStartLDevice`, `StartLDevice`, buffer read, `StopLDevice`) and DAC output
+`9` through `IoAsync`. TTL, frequency, word, and memory/register manipulation
+helpers are not exposed. Channels and data are `uint32` arrays with at most 128
+elements. The server validates device-specific layouts before calling wlcomp,
+including L791 paired DAC output, E140 dual DAC output, and E154 8-bit DAC
+values. For E140 and E440 ADC input, the single channel value may include LCard
+channel mode bits: differential `0`, zero calibration `16`, or
+single-ended/common-ground `32`; for E2010/E2010B the `mode` argument carries
+the ADC input mask.
 
 ## NI-DAQmx Backend
 
