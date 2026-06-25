@@ -21,13 +21,15 @@ constexpr std::string_view level_name(LogLevel level) {
 
 }  // namespace
 
-Logger::Logger(std::ostream& output, LogLevel minimum)
-    : outputs_{&output}, minimum_(minimum) {}
+Logger::Logger(std::ostream& output, LogLevel minimum, bool packet_dump_enabled)
+    : outputs_{&output},
+      minimum_(minimum),
+      packet_dump_enabled_(packet_dump_enabled) {}
 
 Logger::Logger(
     std::initializer_list<std::reference_wrapper<std::ostream>> outputs,
-    LogLevel minimum)
-    : minimum_(minimum) {
+    LogLevel minimum, bool packet_dump_enabled)
+    : minimum_(minimum), packet_dump_enabled_(packet_dump_enabled) {
     outputs_.reserve(outputs.size());
     for (auto output : outputs) {
         outputs_.push_back(&output.get());
@@ -63,7 +65,9 @@ void Logger::log(LogLevel level, std::string_view message) {
 
 void Logger::packet(LogLevel level, std::string_view event,
                     std::span<const std::byte> bytes, std::string_view fields) {
-#ifdef DEBUG
+    if (!packet_dump_enabled_) {
+        return;
+    }
     std::ostringstream dump;
     dump << event << ' ' << fields << " bytes=";
     for (const auto byte : bytes) {
@@ -71,12 +75,6 @@ void Logger::packet(LogLevel level, std::string_view event,
              << std::to_integer<unsigned int>(byte);
     }
     log(level, dump.str());
-#else
-    (void)level;
-    (void)event;
-    (void)bytes;
-    (void)fields;
-#endif
 }
 
 }  // namespace nrpc

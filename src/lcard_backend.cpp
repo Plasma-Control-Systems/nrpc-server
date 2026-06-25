@@ -16,14 +16,17 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include "nrpc/error_codes.hpp"
 
 namespace nrpc {
 namespace {
 
+#ifdef _WIN32
 using NativeHandle = std::uintptr_t;
 
 inline constexpr std::uint32_t native_success = 0;
@@ -129,6 +132,7 @@ static_assert(sizeof(NativeSlotParameters) == 80);
 static_assert(sizeof(NativeAsyncParameters) == 1060);
 static_assert(sizeof(NativeAdcParameters0) == 604);
 static_assert(sizeof(NativeAdcParameters1) == 604);
+#endif
 
 constexpr std::size_t max_async_values = 128;
 
@@ -314,6 +318,7 @@ BackendResult uint32_values(
     }};
 }
 
+#ifdef _WIN32
 BackendError native_failure(
     std::string_view operation, std::uint32_t native_error) {
     std::uint32_t code = lcard_error::operation_failed;
@@ -1010,13 +1015,28 @@ public:
         return std::unique_ptr<LCardSession>(std::move(session));
     }
 };
+#else
+class UnavailableLCardDriver final : public LCardDriver {
+public:
+    std::expected<std::unique_ptr<LCardSession>, BackendError> open(
+        std::uint32_t, LCardBoardType, std::string_view) override {
+        return std::unexpected(BackendError{
+            lcard_error::library_load_failed,
+            "LCard backend is unavailable on this platform"});
+    }
+};
+#endif
 
 std::atomic<std::uint64_t> next_handle_id{1};
 
 }  // namespace
 
 std::shared_ptr<LCardDriver> create_lcard_driver() {
+#ifdef _WIN32
     return std::make_shared<NativeLCardDriver>();
+#else
+    return std::make_shared<UnavailableLCardDriver>();
+#endif
 }
 
 void register_lcard_backend(

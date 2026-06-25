@@ -16,6 +16,19 @@ def available_port() -> int:
         return listener.getsockname()[1]
 
 
+def wait_for_server(process, port: int) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError("nRPC server exited during startup")
+        try:
+            with socket.create_connection(("127.0.0.1", port), 0.1):
+                return
+        except OSError:
+            time.sleep(0.02)
+    raise TimeoutError("nRPC server did not start")
+
+
 class ClientServerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -24,26 +37,29 @@ class ClientServerTests(unittest.TestCase):
             cls.temp_directory.name, "nrpc-server.log"
         )
         cls.port = available_port()
+        cls.config_path = os.path.join(
+            cls.temp_directory.name, "nrpc-server.ini"
+        )
+        with open(cls.config_path, "w", encoding="utf-8") as config_file:
+            config_file.write(
+                "[server]\n"
+                "host = 127.0.0.1\n"
+                f"port = {cls.port}\n"
+                "\n"
+                "[logging]\n"
+                f"file = {cls.log_path}\n"
+                "packet_dump = true\n"
+            )
         cls.server = subprocess.Popen(
             [
                 os.environ["NRPC_SERVER"],
-                str(cls.port),
-                "--log-file",
-                cls.log_path,
+                "--config",
+                cls.config_path,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if cls.server.poll() is not None:
-                raise RuntimeError("nRPC server exited during startup")
-            try:
-                with socket.create_connection(("127.0.0.1", cls.port), 0.1):
-                    return
-            except OSError:
-                time.sleep(0.02)
-        raise TimeoutError("nRPC server did not start")
+        wait_for_server(cls.server, cls.port)
 
     @classmethod
     def tearDownClass(cls):
@@ -128,6 +144,48 @@ class ClientServerTests(unittest.TestCase):
                     1, [TypedValue(DataType.UINT32, 300)], timeout=50
                 )
         self.assertEqual(raised.exception.code, 1002)
+
+    def test_ini_config_controls_startup_and_default_timeout(self):
+        port = available_port()
+        log_path = os.path.join(self.temp_directory.name, "ini-server.log")
+        config_path = os.path.join(self.temp_directory.name, "nrpc-server.ini")
+        with open(config_path, "w", encoding="utf-8") as config_file:
+            config_file.write(
+                "[server]\n"
+                "host = 127.0.0.1\n"
+                f"port = {port}\n"
+                "workers = 2\n"
+                "default_timeout_ms = 50\n"
+                "\n"
+                "[logging]\n"
+                f"file = {log_path}\n"
+                "packet_dump = false\n"
+                "\n"
+                "[tls]\n"
+                "enabled = false\n"
+            )
+
+        server = subprocess.Popen(
+            [os.environ["NRPC_SERVER"], "--config", config_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            wait_for_server(server, port)
+            with NrpcClient("127.0.0.1", port) as client:
+                self.assertEqual(client.call(0, ["configured"]), ["configured"])
+                with self.assertRaises(RemoteError) as raised:
+                    client.call(1, [TypedValue(DataType.UINT32, 300)])
+            self.assertEqual(raised.exception.code, 1002)
+            with open(log_path, encoding="utf-8") as log_file:
+                self.assertIn("UV_THREADPOOL_SIZE=2", log_file.read())
+        finally:
+            server.terminate()
+            try:
+                server.wait(2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
 
     def test_serial_backend_reports_missing_port(self):
         if os.environ["NRPC_HAS_SERIAL_BACKEND"] != "ON":

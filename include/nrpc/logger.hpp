@@ -15,9 +15,10 @@ enum class LogLevel { error, warn, info, debug };
 
 class Logger {
 public:
-    explicit Logger(std::ostream& output, LogLevel minimum = LogLevel::info);
+    explicit Logger(std::ostream& output, LogLevel minimum = LogLevel::info,
+                    bool packet_dump_enabled = false);
     Logger(std::initializer_list<std::reference_wrapper<std::ostream>> outputs,
-           LogLevel minimum = LogLevel::info);
+           LogLevel minimum = LogLevel::info, bool packet_dump_enabled = false);
 
     void log(LogLevel level, std::string_view message);
     void packet(LogLevel level, std::string_view event, std::span<const std::byte> bytes,
@@ -26,6 +27,7 @@ public:
 private:
     std::vector<std::ostream*> outputs_;
     LogLevel minimum_;
+    bool packet_dump_enabled_;
     std::mutex mutex_;
 };
 

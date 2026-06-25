@@ -16,6 +16,7 @@ struct ServerConfig {
     std::string host{"0.0.0.0"};
     std::uint16_t port{9000};
     std::uint32_t max_payload_size{protocol::default_max_payload_size};
+    std::uint32_t default_timeout_ms{0};
     std::size_t arena_size{1024U * 1024U};
     int backlog{128};
     // TLS is enabled when both paths are set. PEM and DER files are accepted.

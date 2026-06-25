@@ -9,8 +9,10 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include "nrpc/error_codes.hpp"
 
@@ -28,6 +30,7 @@ constexpr Int32 daqmx_val_degrees_c = 10143;
 constexpr Int32 daqmx_val_group_by_channel = 0;
 constexpr std::uint32_t max_samples_per_call = 1024U * 1024U;
 
+#ifdef _WIN32
 struct Functions {
     Int32(__cdecl* create_task)(const char*, TaskHandle*);
     Int32(__cdecl* create_ai_voltage)(TaskHandle, const char*, const char*, Int32,
@@ -260,6 +263,41 @@ private:
             std::make_unique<NativeTask>(*library, task, type));
     }
 };
+#else
+class UnavailableNidaqmxDriver final : public NidaqmxDriver {
+public:
+    std::expected<std::unique_ptr<NidaqmxTask>, BackendError>
+    create_ai_voltage(
+        std::string_view, double, double, NidaqmxTerminalConfig) override {
+        return unavailable();
+    }
+
+    std::expected<std::unique_ptr<NidaqmxTask>, BackendError>
+    create_ai_thermocouple(
+        std::string_view, double, double, NidaqmxThermocoupleType,
+        NidaqmxCjcSource, double, std::string_view) override {
+        return unavailable();
+    }
+
+    std::expected<std::unique_ptr<NidaqmxTask>, BackendError>
+    create_ao_voltage(std::string_view, double, double) override {
+        return unavailable();
+    }
+
+    std::expected<std::unique_ptr<NidaqmxTask>, BackendError>
+    create_digital(std::string_view, bool, bool) override {
+        return unavailable();
+    }
+
+private:
+    static std::expected<std::unique_ptr<NidaqmxTask>, BackendError>
+    unavailable() {
+        return std::unexpected(BackendError{
+            nidaqmx_error::library_load_failed,
+            "NI-DAQmx backend is unavailable on this platform"});
+    }
+};
+#endif
 
 std::uint64_t read_u64(std::span<const std::byte> data) {
     std::uint64_t value{};
@@ -347,7 +385,11 @@ BackendResult with_task(const RequestContext& context, std::uint64_t id, Functio
 }  // namespace
 
 std::shared_ptr<NidaqmxDriver> create_nidaqmx_driver() {
+#ifdef _WIN32
     return std::make_shared<NativeDriver>();
+#else
+    return std::make_shared<UnavailableNidaqmxDriver>();
+#endif
 }
 
 void register_nidaqmx_backend(Dispatcher& dispatcher,
