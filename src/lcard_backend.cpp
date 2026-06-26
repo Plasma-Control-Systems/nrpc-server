@@ -135,6 +135,7 @@ static_assert(sizeof(NativeAdcParameters1) == 604);
 #endif
 
 constexpr std::size_t max_async_values = 128;
+constexpr std::uint32_t max_adc_frame_elements = 131072;
 
 std::uint64_t read_u64(std::span<const std::byte> data) {
     std::uint64_t value = 0;
@@ -288,6 +289,50 @@ std::expected<void, BackendError> validate_async(
         return {};
     }
     return invalid("only ADC stream input and asynchronous DAC output are supported");
+}
+
+std::expected<void, BackendError> validate_adc_frame(
+    LCardBoardType board, const LCardAdcFrameParameters& parameters) {
+    const auto invalid = [](std::string message) {
+        return std::expected<void, BackendError>(
+            std::unexpected(BackendError{
+                lcard_error::invalid_arguments, std::move(message)}));
+    };
+    if (board != LCardBoardType::e440 && board != LCardBoardType::e140 &&
+        board != LCardBoardType::e2010 && board != LCardBoardType::e2010b) {
+        return invalid("ADC voltage frames are supported for E140, E440, and E2010");
+    }
+    if (parameters.channel_count == 0 ||
+        parameters.samples_per_channel == 0) {
+        return invalid("ADC frame expects one or more channels and samples");
+    }
+    if (parameters.end_channel < parameters.start_channel) {
+        return invalid("ADC frame end channel must not be before start channel");
+    }
+    if (parameters.end_channel - parameters.start_channel + 1U !=
+        parameters.channel_count) {
+        return invalid("ADC frame channel count must match start and end channel");
+    }
+    if (parameters.channel_count >
+        max_adc_frame_elements / parameters.samples_per_channel) {
+        return invalid("ADC frame supports at most 131072 elements");
+    }
+    if (board == LCardBoardType::e2010 || board == LCardBoardType::e2010b) {
+        if (parameters.end_channel > 3) {
+            return invalid("E2010 ADC frame channels must be between 0 and 3");
+        }
+    } else {
+        if (parameters.mode != 0 && parameters.mode != 16 &&
+            parameters.mode != 32) {
+            return invalid("invalid E140/E440 ADC frame input mode");
+        }
+        const auto maximum_channel =
+            board == LCardBoardType::e440 || parameters.mode == 0 ? 15U : 31U;
+        if (parameters.end_channel > maximum_channel) {
+            return invalid("E140/E440 ADC frame channel is out of range");
+        }
+    }
+    return {};
 }
 
 BackendResult scalar_u64(Arena& arena, std::uint64_t value) {
@@ -678,6 +723,177 @@ public:
         return output;
     }
 
+    std::expected<LCardAdcFrameResult, BackendError> adc_frame(
+        const LCardAdcFrameParameters& parameters) override {
+        auto info = slot_info();
+        if (!info) {
+            return std::unexpected(info.error());
+        }
+        auto board = parse_board(info->board_type);
+        if (!board) {
+            return std::unexpected(board.error());
+        }
+
+        const auto timeout_ms =
+            parameters.timeout_ms == 0 ? default_adc_timeout_ms
+                                       : parameters.timeout_ms;
+        const auto total_points =
+            parameters.channel_count * parameters.samples_per_channel;
+        std::uint32_t buffer_points = default_adc_buffer_points;
+        const auto buffer_result = functions_.request_buffer_stream(
+            &interface_, &buffer_points, native_l_stream_adc);
+        if (buffer_result != native_success) {
+            return std::unexpected(
+                native_failure("RequestBufferStream", buffer_result));
+        }
+        if (buffer_points < total_points) {
+            return std::unexpected(BackendError{
+                lcard_error::operation_failed,
+                "ADC stream buffer is smaller than the requested frame"});
+        }
+
+        void* data = nullptr;
+        void* sync = nullptr;
+        double effective_rate = parameters.rate;
+        std::uint32_t set_size = buffer_points;
+        std::uint32_t point_size = 2;
+        const auto channels = frame_channels(*board, parameters);
+
+        if (*board == LCardBoardType::e440 ||
+            *board == LCardBoardType::e140) {
+            NativeAdcParameters0 adc{};
+            adc.type = native_l_adc_param;
+            adc.fifo = 4096;
+            adc.irq_step = 4096;
+            adc.pages = 32;
+            adc.auto_init = parameters.auto_init ? 1U : 0U;
+            adc.rate_hz = requested_or_default(parameters.rate, 100.0);
+            adc.frame_delay = adc.rate_hz > 0.0 ? 1.0 / adc.rate_hz : 0.0;
+            adc.sync_type = 0;
+            adc.channel_count = parameters.channel_count;
+            copy_channels(
+                std::span(adc.channels),
+                std::span<const std::uint32_t>(channels.data(), channels.size()));
+            adc.irq_enabled = 1;
+            adc.adc_enabled = 1;
+
+            auto result = functions_.fill_daq_parameters(
+                &interface_, &adc, native_wadc_par_0);
+            if (result != native_success) {
+                return std::unexpected(
+                    native_failure("FillDAQparameters", result));
+            }
+            effective_rate = adc.rate_hz;
+
+            result = functions_.set_parameters_stream(
+                &interface_, &adc, native_wadc_par_0, &set_size, &data, &sync,
+                native_l_stream_adc);
+            if (result != native_success) {
+                return std::unexpected(
+                    native_failure("SetParametersStream", result));
+            }
+        } else {
+            NativeAdcParameters1 adc{};
+            adc.type = native_l_adc_param;
+            adc.fifo = 4096;
+            adc.irq_step = 4096;
+            adc.pages = 32;
+            adc.auto_init = parameters.auto_init ? 1U : 0U;
+            adc.rate_hz = requested_or_default(parameters.rate, 1000.0);
+            adc.frame_delay = adc.rate_hz > 0.0 ? 1.0 / adc.rate_hz : 0.0;
+            adc.sync_type = 0x01;
+            adc.sync_source = 0x00;
+            adc.adc_input_mask =
+                parameters.mode == 0 ? 0x0400U : parameters.mode;
+            adc.channel_count = parameters.channel_count;
+            copy_channels(
+                std::span(adc.channels),
+                std::span<const std::uint32_t>(channels.data(), channels.size()));
+            adc.irq_enabled = 1;
+            adc.adc_enabled = 1;
+
+            auto result = functions_.fill_daq_parameters(
+                &interface_, &adc, native_wadc_par_1);
+            if (result != native_success) {
+                return std::unexpected(
+                    native_failure("FillDAQparameters", result));
+            }
+            effective_rate = adc.rate_hz;
+
+            result = functions_.set_parameters_stream(
+                &interface_, &adc, native_wadc_par_1, &set_size, &data, &sync,
+                native_l_stream_adc);
+            if (result != native_success) {
+                return std::unexpected(
+                    native_failure("SetParametersStream", result));
+            }
+        }
+
+        if (data == nullptr || sync == nullptr) {
+            return std::unexpected(BackendError{
+                lcard_error::operation_failed,
+                "ADC stream did not return data and sync pointers"});
+        }
+        if (auto result = functions_.get_parameter(
+                &interface_, native_l_point_size, &point_size);
+            result != native_success && result != native_not_supported) {
+            return std::unexpected(native_failure("GetParameter", result));
+        }
+        if (point_size < sizeof(std::uint16_t)) {
+            point_size = sizeof(std::uint16_t);
+        }
+
+        if (auto result = functions_.enable_correction(&interface_, 1);
+            result != native_success && result != native_not_supported) {
+            return std::unexpected(native_failure("EnableCorrection", result));
+        }
+
+        auto result = functions_.init_start_device(&interface_);
+        if (result != native_success) {
+            return std::unexpected(native_failure("InitStartLDevice", result));
+        }
+        result = functions_.start_device(&interface_);
+        if (result != native_success) {
+            return std::unexpected(native_failure("StartLDevice", result));
+        }
+
+        StopGuard stop_guard{&functions_, &interface_, true};
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(timeout_ms);
+        auto* sync_words = static_cast<volatile std::uint32_t*>(sync);
+        while (*sync_words < total_points) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return std::unexpected(BackendError{
+                    lcard_error::operation_timeout,
+                    "ADC frame read timed out"});
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        LCardAdcFrameResult output{
+            effective_rate,
+            parameters.channel_count,
+            parameters.samples_per_channel,
+            {},
+        };
+        output.data.resize(total_points);
+        const auto* bytes = static_cast<const std::byte*>(data);
+        for (std::uint32_t index = 0; index < total_points; ++index) {
+            std::uint16_t sample = 0;
+            std::memcpy(
+                &sample, bytes + static_cast<std::size_t>(index) * point_size,
+                sizeof(sample));
+            output.data[index] = sample;
+        }
+
+        stop_guard.active = false;
+        result = functions_.stop_device(&interface_);
+        if (result != native_success) {
+            return std::unexpected(native_failure("StopLDevice", result));
+        }
+        return output;
+    }
+
     std::expected<void, BackendError> plata_test() {
         const auto result = functions_.plata_test(&interface_);
         if (result != native_success && result != native_not_supported) {
@@ -719,6 +935,22 @@ private:
         for (std::size_t index = 0; index < source.size(); ++index) {
             destination[index] = source[index];
         }
+    }
+
+    static std::vector<std::uint32_t> frame_channels(
+        LCardBoardType board, const LCardAdcFrameParameters& parameters) {
+        std::vector<std::uint32_t> channels;
+        channels.reserve(parameters.channel_count);
+        for (std::uint32_t channel = parameters.start_channel;
+             channel <= parameters.end_channel; ++channel) {
+            auto spec = channel;
+            if (board == LCardBoardType::e440 ||
+                board == LCardBoardType::e140) {
+                spec |= parameters.mode;
+            }
+            channels.push_back(spec);
+        }
+        return channels;
     }
 
     std::expected<LCardAsyncResult, BackendError> read_adc_stream(
@@ -1154,6 +1386,92 @@ void register_lcard_backend(
                 {protocol::DataType::float64, 1, std::as_const(*rate_memory)},
                 {protocol::DataType::uint32,
                  static_cast<std::uint32_t>(count),
+                 std::as_const(*data_memory)},
+            };
+        });
+
+    dispatcher.register_handler(
+        lcard_function::adc_frame,
+        [](const RequestContext& context,
+           std::span<const protocol::Variable> arguments,
+           Arena& arena) -> BackendResult {
+            if (arguments.size() != 8 ||
+                !is_scalar(arguments[0], protocol::DataType::uint64, 8) ||
+                !is_scalar(arguments[1], protocol::DataType::uint32, 4) ||
+                !is_scalar(arguments[2], protocol::DataType::float64, 8) ||
+                !is_scalar(arguments[3], protocol::DataType::uint32, 4) ||
+                !is_scalar(arguments[4], protocol::DataType::uint32, 4) ||
+                !is_scalar(arguments[5], protocol::DataType::uint32, 4) ||
+                !is_scalar(arguments[6], protocol::DataType::uint32, 4) ||
+                !is_scalar(arguments[7], protocol::DataType::boolean, 1)) {
+                return std::unexpected(BackendError{
+                    lcard_error::invalid_arguments,
+                    "LCard ADC frame expects handle, channel count, rate, samples, start, end, mode, and auto-init"});
+            }
+            LCardAdcFrameParameters parameters{
+                read_f64(arguments[2].data),
+                read_u32(arguments[6].data),
+                read_u32(arguments[1].data),
+                read_u32(arguments[3].data),
+                read_u32(arguments[4].data),
+                read_u32(arguments[5].data),
+                context.timeout_ms,
+                arguments[7].data[0] != std::byte{0},
+            };
+            auto result = context.resources.with_handle<LCardSession>(
+                context.client_id, read_u64(arguments[0].data),
+                [&](LCardSession& session) {
+                    auto info = session.slot_info();
+                    if (!info) {
+                        return std::expected<LCardAdcFrameResult, BackendError>(
+                            std::unexpected(info.error()));
+                    }
+                    auto board = parse_board(info->board_type);
+                    if (!board) {
+                        return std::expected<LCardAdcFrameResult, BackendError>(
+                            std::unexpected(board.error()));
+                    }
+                    if (auto valid = validate_adc_frame(*board, parameters);
+                        !valid) {
+                        return std::expected<LCardAdcFrameResult, BackendError>(
+                            std::unexpected(valid.error()));
+                    }
+                    return session.adc_frame(parameters);
+                });
+            if (!result) {
+                return std::unexpected(BackendError{
+                    lcard_error::invalid_handle, "unknown LCard handle"});
+            }
+            if (!*result) return std::unexpected(result->error());
+
+            auto rate_memory = arena.allocate(8, 8);
+            auto channels_memory = arena.allocate(4, 4);
+            auto samples_memory = arena.allocate(4, 4);
+            auto data_memory =
+                arena.allocate(result->value().data.size() * 4U, 4);
+            if (!rate_memory || !channels_memory || !samples_memory ||
+                !data_memory) {
+                return std::unexpected(BackendError{
+                    error_code::arena_exhausted,
+                    "response arena exhausted"});
+            }
+            write_f64(*rate_memory, result->value().rate);
+            write_u32(*channels_memory, result->value().channel_count);
+            write_u32(*samples_memory, result->value().samples_per_channel);
+            for (std::size_t index = 0; index < result->value().data.size();
+                 ++index) {
+                write_u32(
+                    data_memory->subspan(index * 4U, 4U),
+                    result->value().data[index]);
+            }
+            return std::vector<protocol::VariableView>{
+                {protocol::DataType::float64, 1, std::as_const(*rate_memory)},
+                {protocol::DataType::uint32, 1,
+                 std::as_const(*channels_memory)},
+                {protocol::DataType::uint32, 1,
+                 std::as_const(*samples_memory)},
+                {protocol::DataType::uint32,
+                 static_cast<std::uint32_t>(result->value().data.size()),
                  std::as_const(*data_memory)},
             };
         });
