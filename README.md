@@ -69,16 +69,11 @@ cmake --build build-windows-release --config Release --parallel
 .\build-windows-release\Release\nrpc_server.exe 9000
 ```
 
-The LCard and NI-DAQmx backend APIs are always registered. On Windows they load
-their vendor DLLs at runtime, so vendor headers and import libraries are not
-required to compile the server. LCard DLLs are loaded from
-`C:\Program Files (x86)\LCard\LIBRARY\BIN` by default; change this with
-`-DNRPC_LCARD_LIBRARY_DIR=...`. When a client opens an LCard board without an
-explicit BIOS path, the server searches
-`C:\Program Files (x86)\LCard\LIBRARY\BIOS` by default; change this with
-`-DNRPC_LCARD_BIOS_DIR=...`. NI-DAQmx requires `nicaiu.dll` from an installed
-NI-DAQmx runtime on the target machine. If a vendor runtime is missing, the
-client receives the backend's runtime load error.
+The NI-DAQmx backend API is always registered. On Windows it loads the vendor
+DLL at runtime, so vendor headers and import libraries are not required to
+compile the server. NI-DAQmx requires `nicaiu.dll` from an installed NI-DAQmx
+runtime on the target machine. If the runtime is missing, the client receives
+the backend's runtime load error.
 
 ### Linux (Ubuntu/Debian)
 
@@ -101,9 +96,9 @@ ctest --test-dir build-linux --output-on-failure
 
 The executable is `build-linux/nrpc_server`. CMake discovers libuv and mbedTLS
 through their CMake packages or `pkg-config`. Linux serial support uses the
-native POSIX `termios` API and needs no additional serial library. The LCard
-and NI-DAQmx function ranges are still registered; calls return runtime load
-errors because those vendor runtimes are Windows-only.
+native POSIX `termios` API and needs no additional serial library. The NI-DAQmx
+function range is still registered; calls return runtime load errors because
+the vendor runtime is Windows-only.
 
 Create an optimized build without tests as follows:
 
@@ -124,12 +119,10 @@ cmake --build build-linux-release --parallel
 | `CMAKE_BUILD_TYPE` | `Debug` | Single-config generators only; must be `Debug` or `Release` |
 | `BUILD_TESTING` | `ON` | Build the C++ test suite |
 | `NRPC_THIRDPARTY_DIR` | `thirdparty` | Windows dependency directory containing `include/` and `libs/` |
-| `NRPC_LCARD_LIBRARY_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIN` | Default LCard runtime DLL lookup directory |
-| `NRPC_LCARD_BIOS_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIOS` | Default LCard BIOS/PLD lookup directory |
 | `NRPC_PYTHON_CLIENT_SOURCE_DIR` | auto-detected | Optional Python client tree for integration tests |
 
 Visual Studio and other multi-config generators expose only `Debug` and
-`Release`. The built-in TCP, serial, LCard, and NI-DAQmx backend APIs are always
+`Release`. The built-in TCP, serial, and NI-DAQmx backend APIs are always
 compiled and registered. TLS is compiled when mbedTLS is found; otherwise the
 server builds without TLS support and reports an error if TLS certificates are
 configured at runtime.
@@ -252,7 +245,6 @@ The sample executable registers two mock functions:
 - `1`: blocking sleep accepting one network-order `uint32` duration in ms
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
-- `48` through `52`: Windows LCard lcomp/wlcomp backend
 - `64` through `74`: Windows NI-DAQmx backend
 
 The sleep backend exists to exercise worker isolation and timeout handling.
@@ -302,46 +294,6 @@ control codes are none `0`, software `1`, RTS/CTS `2`, and DTR/DSR `3`.
 The POSIX backend accepts baud rates exposed by the host's `termios` API.
 Platform-specific modes that `termios` cannot represent return error `3008`;
 this includes DTR/DSR flow control and, on macOS, mark/space parity.
-
-## LCard Backend
-
-The Windows-only LCard backend dynamically loads the installed wlcomp wrapper,
-which in turn loads the matching 32-bit or 64-bit lcomp library. Device handles
-are scoped to their owning nRPC connection and close automatically on
-disconnect.
-
-`register_lcard_backend(dispatcher)` installs this function table:
-
-| Index | Operation | Arguments | Result |
-| ---: | --- | --- | --- |
-| 48 | Open | `uint32 slot`, `uint32 board type`, `string BIOS path` | `uint64 handle` |
-| 49 | LCard I/O | handle, operation, rate, mode, count, channels, data | actual rate, data |
-| 50 | Slot info | `uint64 handle` | board type, DSP type, IRQ |
-| 51 | Load BIOS | `uint64 handle`, `string path` | no variables |
-| 52 | Close | `uint64 handle` | no variables |
-
-The server rejects open when the physical slot's `BoardType` differs from the
-requested type. Supported values are PCI A `5`, PCI B `6`, PCI C `14`, L791
-`19`, E440 `30`, E140 `31`, E2010 `32`, E154 `38`, E2010B `39`, and E310 `77`.
-
-The BIOS path may be empty during open. In that case the native Windows driver
-looks for a board-matching `.bio`, `.pld`, or `.bin` file in the default BIOS
-directory and attempts to load it automatically when found. Automatic BIOS
-loading is best-effort because some boards or driver states reject `LoadBios`
-when firmware is already initialized or not required; an explicit BIOS path
-still fails open if `LoadBios` fails. Set `NRPC_LCARD_BIOS_DIR` in the server
-environment, or configure `-DNRPC_LCARD_BIOS_DIR=...`, to use a different
-directory. Function `49` supports ADC input `6` through the vendor stream
-pipeline (`RequestBufferStream`, `FillDAQparameters`, `SetParametersStream`,
-`InitStartLDevice`, `StartLDevice`, buffer read, `StopLDevice`) and DAC output
-`9` through `IoAsync`. TTL, frequency, word, and memory/register manipulation
-helpers are not exposed. Channels and data are `uint32` arrays with at most 128
-elements. The server validates device-specific layouts before calling wlcomp,
-including L791 paired DAC output, E140 dual DAC output, and E154 8-bit DAC
-values. For E140 and E440 ADC input, the single channel value may include LCard
-channel mode bits: differential `0`, zero calibration `16`, or
-single-ended/common-ground `32`; for E2010/E2010B the `mode` argument carries
-the ADC input mask.
 
 ## NI-DAQmx Backend
 
@@ -441,13 +393,6 @@ Server-reserved error codes:
 | 3006 | Serial read failed |
 | 3007 | Serial operation timed out |
 | 3008 | Serial operation unsupported |
-| 4001 | Invalid LCard backend arguments |
-| 4002 | LCard library load failed |
-| 4003 | LCard device open failed |
-| 4004 | Invalid or foreign LCard handle |
-| 4005 | LCard operation failed |
-| 4006 | LCard operation unsupported |
-| 4007 | LCard operation timed out |
 | 5001 | Invalid NI-DAQmx backend arguments |
 | 5002 | NI-DAQmx runtime load failed |
 | 5003 | NI-DAQmx task/channel creation failed |

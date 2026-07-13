@@ -71,17 +71,11 @@ cmake --build build-windows-release --config Release --parallel
 .\build-windows-release\Release\nrpc_server.exe 9000
 ```
 
-API бэкендов LCard и NI-DAQmx всегда регистрируются. На Windows они загружают
-DLL поставщиков во время выполнения, поэтому для компиляции сервера не нужны
-заголовки поставщиков и import-библиотеки. DLL LCard по умолчанию загружаются
-из `C:\Program Files (x86)\LCard\LIBRARY\BIN`; измените это через
-`-DNRPC_LCARD_LIBRARY_DIR=...`. Когда клиент открывает плату LCard без явно
-указанного пути к BIOS, сервер по умолчанию ищет его в
-`C:\Program Files (x86)\LCard\LIBRARY\BIOS`; измените это через
-`-DNRPC_LCARD_BIOS_DIR=...`. Для NI-DAQmx требуется `nicaiu.dll` из
-установленного runtime NI-DAQmx на целевой машине. Если runtime поставщика
-отсутствует, клиент получает ошибку загрузки runtime от соответствующего
-бэкенда.
+API бэкенда NI-DAQmx всегда регистрируется. На Windows он загружает DLL
+поставщика во время выполнения, поэтому для компиляции сервера не нужны
+заголовки поставщика и import-библиотеки. Для NI-DAQmx требуется `nicaiu.dll`
+из установленного runtime NI-DAQmx на целевой машине. Если runtime отсутствует,
+клиент получает ошибку загрузки runtime от бэкенда.
 
 ### Linux (Ubuntu/Debian)
 
@@ -105,9 +99,9 @@ ctest --test-dir build-linux --output-on-failure
 Исполняемый файл находится в `build-linux/nrpc_server`. CMake находит libuv и
 mbedTLS через их CMake-пакеты или `pkg-config`. Поддержка последовательных
 портов в Linux использует нативный POSIX API `termios` и не требует
-дополнительной serial-библиотеки. Диапазоны функций LCard и NI-DAQmx все равно
-регистрируются; вызовы возвращают ошибки загрузки runtime, потому что эти
-runtime поставщиков доступны только для Windows.
+дополнительной serial-библиотеки. Диапазон функций NI-DAQmx все равно
+регистрируется; вызовы возвращают ошибки загрузки runtime, потому что runtime
+поставщика доступен только для Windows.
 
 Оптимизированную сборку без тестов можно создать так:
 
@@ -128,12 +122,10 @@ cmake --build build-linux-release --parallel
 | `CMAKE_BUILD_TYPE` | `Debug` | Только для single-config генераторов; должен быть `Debug` или `Release` |
 | `BUILD_TESTING` | `ON` | Собирать набор C++-тестов |
 | `NRPC_THIRDPARTY_DIR` | `thirdparty` | Каталог зависимостей Windows, содержащий `include/` и `libs/` |
-| `NRPC_LCARD_LIBRARY_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIN` | Каталог поиска runtime DLL LCard по умолчанию |
-| `NRPC_LCARD_BIOS_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIOS` | Каталог поиска BIOS/PLD LCard по умолчанию |
 | `NRPC_PYTHON_CLIENT_SOURCE_DIR` | определяется автоматически | Необязательное дерево Python-клиента для интеграционных тестов |
 
 Visual Studio и другие multi-config генераторы предоставляют только `Debug` и
-`Release`. Встроенные API TCP, serial, LCard и NI-DAQmx бэкендов всегда
+`Release`. Встроенные API TCP, serial и NI-DAQmx бэкендов всегда
 компилируются и регистрируются. TLS компилируется, когда найден mbedTLS; иначе
 сервер собирается без поддержки TLS и сообщает об ошибке, если TLS-сертификаты
 настроены во время выполнения.
@@ -260,7 +252,6 @@ TLS-соединения.
 - `1`: блокирующий sleep, принимающий одну длительность `uint32` в мс в сетевом порядке байтов
 - `16`-`19`: кроссплатформенный TCP-бэкенд
 - `32`-`35`: serial-бэкенд
-- `48`-`52`: Windows-бэкенд LCard lcomp/wlcomp
 - `64`-`74`: Windows-бэкенд NI-DAQmx
 
 Sleep-бэкенд существует для проверки изоляции worker-потоков и обработки
@@ -312,49 +303,6 @@ POSIX-бэкенд принимает скорости передачи, дос�
 Платформенно-зависимые режимы, которые нельзя представить через `termios`,
 возвращают ошибку `3008`; сюда входят управление потоком DTR/DSR и, на macOS,
 четность mark/space.
-
-## LCard-бэкенд
-
-Доступный только на Windows LCard-бэкенд динамически загружает установленную обертку wlcomp,
-которая, в свою очередь, загружает соответствующую 32-битную или 64-битную
-библиотеку lcomp. Handles устройств ограничены владеющим nRPC-соединением и
-автоматически закрываются при отключении.
-
-`register_lcard_backend(dispatcher)` устанавливает такую таблицу функций:
-
-| Индекс | Операция | Аргументы | Результат |
-| ---: | --- | --- | --- |
-| 48 | Open | `uint32 slot`, `uint32 board type`, `string BIOS path` | `uint64 handle` |
-| 49 | LCard I/O | handle, operation, rate, mode, count, channels, data | actual rate, data |
-| 50 | Slot info | `uint64 handle` | board type, DSP type, IRQ |
-| 51 | Load BIOS | `uint64 handle`, `string path` | нет переменных |
-| 52 | Close | `uint64 handle` | нет переменных |
-
-Сервер отклоняет открытие, если `BoardType` физического слота отличается от
-запрошенного типа. Поддерживаемые значения: PCI A `5`, PCI B `6`, PCI C `14`,
-L791 `19`, E440 `30`, E140 `31`, E2010 `32`, E154 `38`, E2010B `39` и E310
-`77`.
-
-Путь к BIOS может быть пустым при открытии. В этом случае нативный драйвер
-Windows ищет подходящий для платы файл `.bio`, `.pld` или `.bin` в каталоге BIOS
-по умолчанию и пытается загрузить его автоматически, если файл найден.
-Автоматическая загрузка BIOS выполняется по принципу best effort, потому что
-некоторые платы или состояния драйвера отклоняют `LoadBios`, когда firmware уже
-инициализирована или не требуется; явно указанный путь к BIOS все равно
-приведет к ошибке открытия, если `LoadBios` завершится ошибкой. Задайте
-`NRPC_LCARD_BIOS_DIR` в окружении сервера или настройте
-`-DNRPC_LCARD_BIOS_DIR=...`, чтобы использовать другой каталог. Функция `49`
-поддерживает ввод ADC `6` через vendor stream pipeline (`RequestBufferStream`,
-`FillDAQparameters`, `SetParametersStream`, `InitStartLDevice`, `StartLDevice`,
-чтение буфера, `StopLDevice`) и вывод DAC `9` через `IoAsync`. Вспомогательные
-функции TTL, frequency, word и memory/register manipulation не предоставляются.
-Channels и data являются массивами `uint32` максимум по 128 элементов. Сервер
-проверяет layout, специфичный для устройства, перед вызовом wlcomp, включая
-парный вывод DAC для L791, двойной вывод DAC для E140 и 8-битные значения DAC
-для E154. Для ввода ADC E140 и E440 единственное значение channel может
-включать mode bits LCard channel: differential `0`, zero calibration `16` или
-single-ended/common-ground `32`; для E2010/E2010B аргумент `mode` несет ADC
-input mask.
 
 ## NI-DAQmx-бэкенд
 
@@ -455,13 +403,6 @@ cmake -S . -B build \
 | 3006 | Ошибка чтения serial |
 | 3007 | Истек тайм-аут операции serial |
 | 3008 | Операция serial не поддерживается |
-| 4001 | Некорректные аргументы LCard-бэкенда |
-| 4002 | Не удалось загрузить библиотеку LCard |
-| 4003 | Не удалось открыть устройство LCard |
-| 4004 | Некорректный или чужой LCard handle |
-| 4005 | Ошибка операции LCard |
-| 4006 | Операция LCard не поддерживается |
-| 4007 | Истек тайм-аут операции LCard |
 | 5001 | Некорректные аргументы NI-DAQmx-бэкенда |
 | 5002 | Не удалось загрузить runtime NI-DAQmx |
 | 5003 | Не удалось создать задачу/канал NI-DAQmx |

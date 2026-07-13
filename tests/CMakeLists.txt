@@ -1,7 +1,6 @@
 add_executable(nrpc_tests
     arena_test.cpp
     dispatcher_test.cpp
-    lcard_backend_test.cpp
     logger_test.cpp
     nidaqmx_backend_test.cpp
     protocol_test.cpp

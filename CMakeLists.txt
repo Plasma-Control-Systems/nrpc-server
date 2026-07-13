@@ -56,17 +56,6 @@ set(
     "${PROJECT_SOURCE_DIR}/thirdparty"
     CACHE PATH "Windows-only directory containing include/ and libs/ folders"
 )
-set(
-    NRPC_LCARD_LIBRARY_DIR
-    "C:/Program Files (x86)/LCard/LIBRARY/BIN"
-    CACHE PATH "Path to the LCard lcomp/wlcomp runtime DLL directory"
-)
-set(
-    NRPC_LCARD_BIOS_DIR
-    "C:/Program Files (x86)/LCard/LIBRARY/BIOS"
-    CACHE PATH "Path to the default LCard BIOS and PLD directory"
-)
-
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -135,7 +124,6 @@ endfunction()
 add_library(nrpc
     src/arena.cpp
     src/dispatcher.cpp
-    src/lcard_backend.cpp
     src/logger.cpp
     src/nidaqmx_backend.cpp
     src/protocol.cpp
@@ -228,13 +216,7 @@ target_compile_definitions(
     nrpc PUBLIC
     NRPC_HAS_TLS=$<BOOL:${NRPC_HAS_TLS}>
     NRPC_HAS_SERIAL_BACKEND=1
-    NRPC_HAS_LCARD_BACKEND=1
     NRPC_HAS_NIDAQMX_BACKEND=1
-)
-target_compile_definitions(
-    nrpc PRIVATE
-    NRPC_LCARD_LIBRARY_DIR="${NRPC_LCARD_LIBRARY_DIR}"
-    NRPC_LCARD_BIOS_DIR="${NRPC_LCARD_BIOS_DIR}"
 )
 if(PLATFORM STREQUAL "windows")
     target_link_libraries(nrpc PUBLIC ws2_32)
