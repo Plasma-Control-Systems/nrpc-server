@@ -75,6 +75,13 @@ compile the server. NI-DAQmx requires `nicaiu.dll` from an installed NI-DAQmx
 runtime on the target machine. If the runtime is missing, the client receives
 the backend's runtime load error.
 
+The LCard backend is also always registered and dynamically loads
+`wlcomp64.dll` (or `wlcomp.dll` for a 32-bit build). WLCOMP then loads the
+matching LComp runtime. Vendor headers and import libraries are not required
+to compile the server. Install LComp 7 and ensure both DLLs are on the server
+process DLL search path; the standard LCard installation directory is also
+checked automatically.
+
 ### Linux (Ubuntu/Debian)
 
 Install the compiler and development packages:
@@ -246,6 +253,7 @@ The sample executable registers two mock functions:
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
 - `64` through `74`: Windows NI-DAQmx backend
+- `80` through `85`: Windows LCard/LComp backend
 
 The sleep backend exists to exercise worker isolation and timeout handling.
 
@@ -326,6 +334,41 @@ R `10082`, S `10085`, and T `10086`. CJC sources are built-in `10200`, constant
 writes. This subset creates on-demand, single-channel tasks; hardware-timed
 sampling and explicit clock configuration are outside its scope.
 
+## LCard Backend
+
+The LCard backend owns one WLCOMP interface handle per nRPC handle and uses the
+vendor's C ABI for lifecycle, asynchronous I/O, streams, and buffer access.
+Devices and mapped ADC/DAC streams are stopped and
+released on explicit close, client disconnect, or server shutdown. Values are
+raw hardware codes; conversion to volts is intentionally left to application
+code and the board's metrology data.
+
+`register_lcard_backend(dispatcher)` installs this function table:
+
+| Index | Operation | Arguments | Result |
+| ---: | --- | --- | --- |
+| 80 | Open | `uint32 slot`, `string firmware_path` | handle, board metadata, capability flags |
+| 81 | Read one ADC code | handle and one channel descriptor | `int16 code` |
+| 82 | Read one ADC frame | handle, channel descriptor arrays, `float64 rate_khz` | `int16[] codes`, actual rate |
+| 83 | Write one DAC code | handle, `uint8 channel`, `uint16 code` | no variables |
+| 84 | Write finite DAC frames | handle, two `uint16[]` arrays, frame rate | frame count, actual rate |
+| 85 | Close | `uint64 handle` | no variables |
+
+Normalized ADC descriptors contain a physical channel, positive full-scale
+range, and input mode. Advanced callers can pass a complete vendor logical
+channel code. Supported ranges are validated after the board is detected.
+E20-10 uses `AdcIMask` for its 3.0, 1.0, and 0.3 V ranges.
+
+Timed DAC frames contain simultaneous DAC0/DAC1 codes. L-7xx and E14 streams
+are interleaved, while L-791 frames are packed into one 32-bit point. Timed
+output is unavailable for E-154 and E20-10 and for E14-140 revisions without
+streaming DAC support. Since LComp has no universal exact one-shot DAC mode,
+the backend stops when the mapped sync counter reaches the submitted sequence;
+some hardware can emit a short buffered tail.
+
+L-7xx, E14-440, and E20-10 devices require an explicit server-local firmware
+path at open. Devices with resident firmware use an empty path.
+
 ## Server API
 
 Register a backend with `nrpc::Dispatcher::register_handler`. A handler receives
@@ -399,6 +442,13 @@ Server-reserved error codes:
 | 5004 | Invalid or foreign NI-DAQmx task handle |
 | 5005 | NI-DAQmx operation failed |
 | 5006 | Operation does not match task channel type |
+| 6001 | Invalid LCard backend arguments |
+| 6002 | WLCOMP or LComp runtime load failed |
+| 6003 | LCard device open failed |
+| 6004 | Invalid or foreign LCard handle |
+| 6005 | LCard device or operation unsupported |
+| 6006 | LCard operation failed |
+| 6007 | LCard operation timed out |
 
 Backend error codes otherwise pass through unchanged. The Python client raises
 `RemoteError` for server/backend failures and `ProtocolError` for malformed

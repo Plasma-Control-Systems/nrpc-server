@@ -124,6 +124,7 @@ endfunction()
 add_library(nrpc
     src/arena.cpp
     src/dispatcher.cpp
+    src/lcard_backend.cpp
     src/logger.cpp
     src/nidaqmx_backend.cpp
     src/protocol.cpp
@@ -133,7 +134,7 @@ add_library(nrpc
     src/tcp_backend.cpp
 )
 if(PLATFORM STREQUAL "windows")
-    target_sources(nrpc PRIVATE src/serial_port_win32.cpp)
+    target_sources(nrpc PRIVATE src/serial_port_win32.cpp src/lcard_native_win32.cpp)
 else()
     target_sources(nrpc PRIVATE src/serial_port_posix.cpp)
 endif()
@@ -217,6 +218,7 @@ target_compile_definitions(
     NRPC_HAS_TLS=$<BOOL:${NRPC_HAS_TLS}>
     NRPC_HAS_SERIAL_BACKEND=1
     NRPC_HAS_NIDAQMX_BACKEND=1
+    NRPC_HAS_LCARD_BACKEND=1
 )
 if(PLATFORM STREQUAL "windows")
     target_link_libraries(nrpc PUBLIC ws2_32)
