@@ -225,8 +225,13 @@ if(PLATFORM STREQUAL "windows")
 endif()
 nrpc_enable_warnings(nrpc)
 
+add_library(nrpc_server_config src/application_config.cpp)
+target_include_directories(nrpc_server_config PUBLIC include)
+target_link_libraries(nrpc_server_config PUBLIC nrpc)
+nrpc_enable_warnings(nrpc_server_config)
+
 add_executable(nrpc_server src/main.cpp)
-target_link_libraries(nrpc_server PRIVATE nrpc)
+target_link_libraries(nrpc_server PRIVATE nrpc_server_config)
 nrpc_enable_warnings(nrpc_server)
 install(TARGETS nrpc_server RUNTIME DESTINATION bin COMPONENT runtime)
 

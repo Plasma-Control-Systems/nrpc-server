@@ -1,4 +1,5 @@
 add_executable(nrpc_tests
+    application_config_test.cpp
     arena_test.cpp
     dispatcher_test.cpp
     logger_test.cpp
@@ -15,7 +16,7 @@ endif()
 if(PLATFORM STREQUAL "linux")
     target_sources(nrpc_tests PRIVATE serial_port_posix_test.cpp)
 endif()
-target_link_libraries(nrpc_tests PRIVATE nrpc GTest::gtest_main)
+target_link_libraries(nrpc_tests PRIVATE nrpc nrpc_server_config GTest::gtest_main)
 nrpc_enable_warnings(nrpc_tests)
 install(TARGETS nrpc_tests RUNTIME DESTINATION tests COMPONENT tests)
 
