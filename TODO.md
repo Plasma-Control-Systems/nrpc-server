@@ -1,1 +1,0 @@
-1. Ignore certificate and private key fields in configuration file if tls is disabled

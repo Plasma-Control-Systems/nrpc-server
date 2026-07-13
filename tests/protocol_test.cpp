@@ -83,6 +83,28 @@ TEST(Protocol, EncodesErrorWithoutVariables) {
     EXPECT_EQ(packet[11], std::byte{42});
 }
 
+TEST(Protocol, EncodesErrorDetailAsStringVariable) {
+    const nrpc::protocol::Response response{
+        .status = nrpc::protocol::StatusCode::error,
+        .function_index = 9,
+        .error_code = 42,
+        .error_message = "native operation failed",
+        .variables = {},
+    };
+    const auto packet = nrpc::protocol::encode_response(response);
+    ASSERT_EQ(
+        packet.size(),
+        nrpc::protocol::header_size +
+            nrpc::protocol::variable_entry_size + 24U);
+    EXPECT_EQ(packet[0], std::byte{1});
+    EXPECT_EQ(packet[2], std::byte{9});
+    EXPECT_EQ(packet[3], std::byte{1});
+    EXPECT_EQ(packet[7], std::byte{40});
+    EXPECT_EQ(packet[11], std::byte{42});
+    EXPECT_EQ(packet[16], std::byte{0xA1});
+    EXPECT_EQ(packet[23], std::byte{24});
+}
+
 TEST(Protocol, RejectsInvalidResponseVariableMetadata) {
     const std::array data{std::byte{1}, std::byte{2}};
     const nrpc::protocol::Response response{

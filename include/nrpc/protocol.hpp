@@ -72,6 +72,7 @@ struct Response {
     StatusCode status{StatusCode::success};
     std::uint8_t function_index{0};
     std::uint32_t error_code{0};
+    std::string error_message;
     std::vector<VariableView> variables;
 };
 

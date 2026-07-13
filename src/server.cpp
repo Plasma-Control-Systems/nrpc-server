@@ -9,6 +9,7 @@
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -292,7 +293,8 @@ private:
             std::ranges::copy_n(connection.input.begin(), protocol::header_size, header.begin());
             const auto payload = protocol::read_payload_size(header);
             if (payload > connection.server->config_.max_payload_size) {
-                send_error(connection, 0, error_code::protocol_error, true);
+                send_error(connection, 0, error_code::protocol_error, true,
+                           "request payload exceeds configured limit");
                 return;
             }
             connection.target_size = protocol::header_size + payload;
@@ -302,7 +304,9 @@ private:
         }
         uv_read_stop(reinterpret_cast<uv_stream_t*>(&connection.tcp));
         if (connection.input.size() != connection.target_size) {
-            send_error(connection, function_index(connection), error_code::protocol_error, true);
+            send_error(connection, function_index(connection),
+                       error_code::protocol_error, true,
+                       "request payload size mismatch");
             return;
         }
 
@@ -313,7 +317,9 @@ private:
                 LogLevel::warn,
                 concatenate("client ", connection.id, " invalid request: ",
                             protocol::to_string(decoded.error())));
-            send_error(connection, function_index(connection), error_code::protocol_error, true);
+            send_error(connection, function_index(connection),
+                       error_code::protocol_error, true,
+                       protocol::to_string(decoded.error()));
             return;
         }
         connection.server->logger_.packet(
@@ -344,7 +350,8 @@ private:
                     delete work;
                     connection.release();
                     send_error(connection, function_index(connection),
-                               error_code::internal_error, true);
+                               error_code::internal_error, true,
+                               "failed to initialize request timeout timer");
                     return;
                 }
                 connection.timer_initialized = true;
@@ -363,7 +370,10 @@ private:
             }
             delete work;
             connection.release();
-            send_error(connection, function_index(connection), error_code::internal_error, true);
+            send_error(connection, function_index(connection),
+                       error_code::internal_error, true,
+                       concatenate("failed to queue request work: ",
+                                   uv_strerror(status)));
         }
     }
 
@@ -389,6 +399,7 @@ private:
                 .status = protocol::StatusCode::error,
                 .function_index = work.decoded.function_index,
                 .error_code = result.error().code,
+                .error_message = result.error().message,
                 .variables = {},
             });
         }
@@ -403,7 +414,8 @@ private:
         if (!connection.closing && !connection.response_sent) {
             if (status == UV_ECANCELED) {
                 send_error(connection, work->decoded.function_index,
-                           error_code::internal_error, true);
+                           error_code::internal_error, true,
+                           "request work was canceled");
             } else {
                 send_response(connection, std::move(work->response), false);
             }
@@ -414,17 +426,21 @@ private:
     static void on_timeout(uv_timer_t* timer) {
         auto& connection = *static_cast<Connection*>(timer->data);
         if (!connection.response_sent && !connection.closing) {
-            send_error(connection, function_index(connection), error_code::timeout, true);
+            send_error(connection, function_index(connection),
+                       error_code::timeout, true,
+                       "request timed out on the server");
         }
     }
 
     static void send_error(Connection& connection, std::uint8_t index,
-                           std::uint32_t code, bool close_after) {
+                           std::uint32_t code, bool close_after,
+                           std::string message = {}) {
         send_response(connection,
                       protocol::encode_response(protocol::Response{
                           .status = protocol::StatusCode::error,
                           .function_index = index,
                           .error_code = code,
+                          .error_message = std::move(message),
                           .variables = {},
                       }),
                       close_after);

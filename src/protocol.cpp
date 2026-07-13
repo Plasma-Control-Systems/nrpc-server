@@ -1,6 +1,7 @@
 #include "nrpc/protocol.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 #include <limits>
@@ -195,20 +196,35 @@ std::vector<std::byte> encode_request(const Request& request) {
 }
 
 std::vector<std::byte> encode_response(const Response& response) {
-    const auto count = response.status == StatusCode::error ? 0U : response.variables.size();
+    std::vector<std::byte> error_message;
+    std::array<VariableView, 1> error_variables{};
+    std::span<const VariableView> variables = response.variables;
+    if (response.status == StatusCode::error && !response.error_message.empty()) {
+        error_message.reserve(response.error_message.size() + 1U);
+        for (const auto character : response.error_message) {
+            error_message.push_back(static_cast<std::byte>(character));
+        }
+        error_message.push_back(std::byte{0});
+        error_variables[0] = VariableView{
+            DataType::string,
+            static_cast<std::uint32_t>(error_message.size()),
+            error_message,
+        };
+        variables = error_variables;
+    }
+    const auto count = variables.size();
     if (count > std::numeric_limits<std::uint8_t>::max()) {
         throw std::length_error("nRPC response has more than 255 variables");
     }
-    if (response.status == StatusCode::success) {
-        for (const auto& variable : response.variables) {
+    if (response.status == StatusCode::success ||
+        response.status == StatusCode::error) {
+        for (const auto& variable : variables) {
             if (!validate_variable(variable)) {
                 throw std::invalid_argument("invalid nRPC response variable");
             }
         }
     }
-    const auto size = response.status == StatusCode::error
-                          ? 0U
-                          : payload_size(response.variables);
+    const auto size = payload_size(variables);
     std::vector<std::byte> output;
     output.reserve(header_size + size);
     output.push_back(static_cast<std::byte>(response.status));
@@ -218,9 +234,7 @@ std::vector<std::byte> encode_response(const Response& response) {
     append_u32(output, size);
     append_u32(output, response.status == StatusCode::error ? response.error_code : 0U);
     output.insert(output.end(), 4, std::byte{0});
-    if (response.status == StatusCode::success) {
-        append_variables(output, response.variables);
-    }
+    append_variables(output, variables);
     return output;
 }
 

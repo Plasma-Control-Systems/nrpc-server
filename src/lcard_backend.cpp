@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -654,48 +655,26 @@ public:
     ~NativeLCardSession() override { close(); }
 
     void close() noexcept override {
-        if (interface_ != 0) {
-            functions_.close_device(&interface_);
-            interface_ = 0;
-        }
-        if (api_ != 0) {
-            functions_.free_api_dll(&api_);
-            api_ = 0;
-        }
-        if (wrapper_ != nullptr) {
-            FreeLibrary(wrapper_);
-            wrapper_ = nullptr;
-        }
+        std::scoped_lock lock(mutex_);
+        close_unlocked();
     }
 
     std::expected<LCardSlotInfo, BackendError> slot_info() override {
-        NativeSlotParameters slot{};
-        const auto result = functions_.get_slot(&interface_, &slot);
-        if (result != native_success) {
-            return std::unexpected(native_failure("GetSlotParam", result));
-        }
-        return LCardSlotInfo{
-            slot.board_type,
-            slot.dsp_type,
-            slot.irq,
-        };
+        std::scoped_lock lock(mutex_);
+        return slot_info_unlocked();
     }
 
     std::expected<void, BackendError> load_bios(
         std::string_view path) override {
-        std::string native_path(path);
-        const auto result =
-            functions_.load_bios(&interface_, native_path.data());
-        if (result != native_success && result != native_not_supported) {
-            return std::unexpected(native_failure("LoadBios", result));
-        }
-        return {};
+        std::scoped_lock lock(mutex_);
+        return load_bios_unlocked(path);
     }
 
     std::expected<LCardAsyncResult, BackendError> io_async(
         const LCardAsyncParameters& parameters) override {
+        std::scoped_lock lock(mutex_);
         if (parameters.operation == LCardAsyncOperation::adc_input) {
-            return read_adc_stream(parameters);
+            return read_adc_stream_unlocked(parameters);
         }
         NativeAsyncParameters native{};
         native.type = static_cast<std::uint32_t>(parameters.operation);
@@ -725,7 +704,8 @@ public:
 
     std::expected<LCardAdcFrameResult, BackendError> adc_frame(
         const LCardAdcFrameParameters& parameters) override {
-        auto info = slot_info();
+        std::scoped_lock lock(mutex_);
+        auto info = slot_info_unlocked();
         if (!info) {
             return std::unexpected(info.error());
         }
@@ -895,6 +875,7 @@ public:
     }
 
     std::expected<void, BackendError> plata_test() {
+        std::scoped_lock lock(mutex_);
         const auto result = functions_.plata_test(&interface_);
         if (result != native_success && result != native_not_supported) {
             return std::unexpected(native_failure("PlataTest", result));
@@ -903,6 +884,7 @@ public:
     }
 
     std::expected<void, BackendError> read_plata_descr() {
+        std::scoped_lock lock(mutex_);
         std::array<std::byte, 256> descriptor{};
         const auto result =
             functions_.read_plata_descr(&interface_, descriptor.data());
@@ -913,6 +895,44 @@ public:
     }
 
 private:
+    void close_unlocked() noexcept {
+        if (interface_ != 0) {
+            functions_.close_device(&interface_);
+            interface_ = 0;
+        }
+        if (api_ != 0) {
+            functions_.free_api_dll(&api_);
+            api_ = 0;
+        }
+        if (wrapper_ != nullptr) {
+            FreeLibrary(wrapper_);
+            wrapper_ = nullptr;
+        }
+    }
+
+    std::expected<LCardSlotInfo, BackendError> slot_info_unlocked() {
+        NativeSlotParameters slot{};
+        const auto result = functions_.get_slot(&interface_, &slot);
+        if (result != native_success) {
+            return std::unexpected(native_failure("GetSlotParam", result));
+        }
+        return LCardSlotInfo{
+            slot.board_type,
+            slot.dsp_type,
+            slot.irq,
+        };
+    }
+
+    std::expected<void, BackendError> load_bios_unlocked(
+        std::string_view path) {
+        std::string native_path(path);
+        const auto result =
+            functions_.load_bios(&interface_, native_path.data());
+        if (result != native_success && result != native_not_supported) {
+            return std::unexpected(native_failure("LoadBios", result));
+        }
+        return {};
+    }
     struct StopGuard {
         NativeFunctions* functions{};
         NativeHandle* native_interface{};
@@ -953,9 +973,9 @@ private:
         return channels;
     }
 
-    std::expected<LCardAsyncResult, BackendError> read_adc_stream(
+    std::expected<LCardAsyncResult, BackendError> read_adc_stream_unlocked(
         const LCardAsyncParameters& parameters) {
-        auto info = slot_info();
+        auto info = slot_info_unlocked();
         if (!info) {
             return std::unexpected(info.error());
         }
@@ -1146,6 +1166,7 @@ private:
     NativeFunctions functions_;
     NativeHandle api_;
     NativeHandle interface_;
+    std::mutex mutex_;
 };
 
 class NativeLCardDriver final : public LCardDriver {
@@ -1232,10 +1253,18 @@ public:
                 discovered_bios->stem().string(),
                 lower_ascii(discovered_bios->stem().string()),
             };
+            std::optional<BackendError> load_error;
+            bool loaded_bios = false;
             for (const auto& automatic_name : automatic_names) {
                 if (auto loaded = session->load_bios(automatic_name); loaded) {
+                    loaded_bios = true;
                     break;
+                } else {
+                    load_error = loaded.error();
                 }
+            }
+            if (!loaded_bios && load_error) {
+                return std::unexpected(*load_error);
             }
         }
         if (auto tested = session->plata_test(); !tested) {
