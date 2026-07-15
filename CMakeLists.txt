@@ -231,6 +231,14 @@ target_link_libraries(nrpc_server_config PUBLIC nrpc)
 nrpc_enable_warnings(nrpc_server_config)
 
 add_executable(nrpc_server src/main.cpp)
+if(WIN32)
+    target_sources(
+        nrpc_server PRIVATE
+        resources/nrpc-server.rc
+        src/windows_notification_icon.cpp
+    )
+    target_link_libraries(nrpc_server PRIVATE shell32 user32)
+endif()
 target_link_libraries(nrpc_server PRIVATE nrpc_server_config)
 nrpc_enable_warnings(nrpc_server)
 install(TARGETS nrpc_server RUNTIME DESTINATION bin COMPONENT runtime)

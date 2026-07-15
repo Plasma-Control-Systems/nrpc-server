@@ -56,7 +56,10 @@ cmake --build build-windows --config Debug --parallel
 ctest --test-dir build-windows -C Debug --output-on-failure
 ```
 
-The executable is `build-windows\Debug\nrpc_server.exe`. If mbedTLS is not in
+The executable is `build-windows\Debug\nrpc_server.exe`. While it is running,
+Windows displays the nRPC icon in the taskbar notification area; hovering over
+it shows the listening port. The icon is removed when the server exits.
+If mbedTLS is not in
 `thirdparty`, CMake prints a status message and builds the plaintext transport.
 Use `-DNRPC_THIRDPARTY_DIR=C:\path\to\dependencies` to select another dependency
 directory.

@@ -19,6 +19,9 @@
 #include "nrpc/serial_backend.hpp"
 #include "nrpc/server.hpp"
 #include "nrpc/tcp_backend.hpp"
+#ifdef _WIN32
+#include "windows_notification_icon.hpp"
+#endif
 
 int main(int argc, char** argv) {
     std::vector<std::string_view> arguments;
@@ -111,6 +114,9 @@ int main(int argc, char** argv) {
     try {
         nrpc::Server server(config.server, dispatcher, resources, logger);
         server.start();
+#ifdef _WIN32
+        nrpc::WindowsNotificationIcon notification_icon(config.server.port);
+#endif
         server.run();
     } catch (const std::exception& exception) {
         logger.log(nrpc::LogLevel::error, exception.what());
