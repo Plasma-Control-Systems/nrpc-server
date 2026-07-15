@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -45,4 +47,19 @@ TEST(Logger, ConcurrentMessagesRemainWholeLines) {
         static_cast<std::size_t>(
             std::count(text.begin(), text.end(), '\n')),
         100U);
+}
+
+TEST(Logger, PacketDumpRequiresRuntimeEnable) {
+    const std::array<std::byte, 2> packet{std::byte{0x12}, std::byte{0xab}};
+
+    std::ostringstream disabled;
+    nrpc::Logger disabled_logger(disabled, nrpc::LogLevel::debug);
+    disabled_logger.packet(nrpc::LogLevel::debug, "RX Request", packet, "function=0");
+    EXPECT_EQ(disabled.str(), "");
+
+    std::ostringstream enabled;
+    nrpc::Logger enabled_logger(enabled, nrpc::LogLevel::debug, true);
+    enabled_logger.packet(nrpc::LogLevel::debug, "RX Request", packet, "function=0");
+    EXPECT_NE(enabled.str().find("RX Request function=0 bytes=12ab"),
+              std::string::npos);
 }

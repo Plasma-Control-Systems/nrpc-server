@@ -134,13 +134,15 @@ private:
         uv_work_t request{};
         Connection* connection;
         protocol::Request decoded;
+        std::uint32_t timeout_ms;
         Arena arena;
         std::vector<std::byte> response;
 
         Work(Connection* connection_value, protocol::Request request_value,
-             std::size_t arena_size)
+             std::uint32_t timeout_ms_value, std::size_t arena_size)
             : connection(connection_value),
               decoded(std::move(request_value)),
+              timeout_ms(timeout_ms_value),
               arena(arena_size) {
             request.data = this;
         }
@@ -314,13 +316,11 @@ private:
             send_error(connection, function_index(connection), error_code::protocol_error, true);
             return;
         }
-#ifdef DEBUG
         connection.server->logger_.packet(
             LogLevel::debug, "RX Request", connection.input,
             concatenate("function=", static_cast<unsigned int>(decoded->function_index),
                         " payload=",
                         connection.input.size() - protocol::header_size));
-#endif
         queue_work(connection, std::move(*decoded));
     }
 
@@ -331,10 +331,14 @@ private:
     }
 
     static void queue_work(Connection& connection, protocol::Request request) {
+        const std::uint32_t timeout_ms =
+            request.timeout_ms != 0 ? request.timeout_ms
+                                    : connection.server->config_.default_timeout_ms;
         auto* work = new Work(&connection, std::move(request),
+                              timeout_ms,
                               connection.server->config_.arena_size);
         connection.retain();
-        if (work->decoded.timeout_ms != 0) {
+        if (work->timeout_ms != 0) {
             if (!connection.timer_initialized) {
                 if (uv_timer_init(&connection.server->loop_, &connection.timer) < 0) {
                     delete work;
@@ -348,7 +352,7 @@ private:
                 connection.retain();
             }
             uv_timer_start(&connection.timer, &Impl::on_timeout,
-                           work->decoded.timeout_ms, 0);
+                           work->timeout_ms, 0);
         }
         const int status =
             uv_queue_work(&connection.server->loop_, &work->request, &Impl::execute_work,
@@ -368,7 +372,7 @@ private:
         auto& connection = *work.connection;
         const RequestContext context{
             connection.id,
-            work.decoded.timeout_ms,
+            work.timeout_ms,
             connection.server->resources_,
         };
         auto result = connection.server->dispatcher_.dispatch(
@@ -432,14 +436,12 @@ private:
             return;
         }
         connection.response_sent = true;
-#ifdef DEBUG
         const auto response_status = std::to_integer<unsigned int>(response[0]);
         connection.server->logger_.packet(
             LogLevel::debug, "TX Response", response,
             concatenate("function=", std::to_integer<unsigned int>(response[2]),
                         " payload=", response.size() - protocol::header_size,
                         " status=", response_status));
-#endif
 #if NRPC_HAS_TLS
         if (connection.tls) {
             try {

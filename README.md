@@ -9,6 +9,14 @@ The project requires CMake 3.20 or newer, a C++23 compiler with
 `std::expected`, and libuv. mbedTLS is optional and enables TLS connections.
 GoogleTest is needed only when `BUILD_TESTING=ON`.
 
+The build has two configurations:
+
+- `Debug`: debug symbols enabled, no optimization
+- `Release`: `O2` optimization enabled, no debug information
+
+Select the target platform with `-DPLATFORM=windows` or `-DPLATFORM=linux`.
+When omitted, CMake chooses the current host platform.
+
 ### Windows
 
 Install Visual Studio 2022 Build Tools (or Visual Studio 2022) with the
@@ -43,7 +51,7 @@ thirdparty/
 Configure, build, and test from a Developer PowerShell prompt:
 
 ```powershell
-cmake -S . -B build-windows -A x64 -DBUILD_TESTING=ON
+cmake -S . -B build-windows -A x64 -DPLATFORM=windows -DBUILD_TESTING=ON
 cmake --build build-windows --config Debug --parallel
 ctest --test-dir build-windows -C Debug --output-on-failure
 ```
@@ -59,17 +67,21 @@ directory.
 Create an optimized build without tests as follows:
 
 ```powershell
-cmake -S . -B build-windows-release -A x64 -DBUILD_TESTING=OFF
+cmake -S . -B build-windows-release -A x64 -DPLATFORM=windows -DBUILD_TESTING=OFF
 cmake --build build-windows-release --config Release --parallel
 .\build-windows-release\Release\nrpc_server.exe 9000
 ```
 
-The LCard and NI-DAQmx backends are Windows-only. They load their vendor DLLs
-at runtime, so vendor headers and import libraries are not required to compile
-the server. LCard DLLs are loaded from
+The LCard and NI-DAQmx backend APIs are always registered. On Windows they load
+their vendor DLLs at runtime, so vendor headers and import libraries are not
+required to compile the server. LCard DLLs are loaded from
 `C:\Program Files (x86)\LCard\LIBRARY\BIN` by default; change this with
-`-DNRPC_LCARD_LIBRARY_DIR=...`. NI-DAQmx requires `nicaiu.dll` from an installed
-NI-DAQmx runtime on the target machine.
+`-DNRPC_LCARD_LIBRARY_DIR=...`. When a client opens an LCard board without an
+explicit BIOS path, the server searches
+`C:\Program Files (x86)\LCard\LIBRARY\BIOS` by default; change this with
+`-DNRPC_LCARD_BIOS_DIR=...`. NI-DAQmx requires `nicaiu.dll` from an installed
+NI-DAQmx runtime on the target machine. If a vendor runtime is missing, the
+client receives the backend's runtime load error.
 
 ### Linux (Ubuntu/Debian)
 
@@ -84,41 +96,49 @@ Configure, build, and test:
 
 ```sh
 cmake -S . -B build-linux \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DNRPC_FETCH_GTEST=OFF
+  -DPLATFORM=linux \
+  -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-linux --parallel
 ctest --test-dir build-linux --output-on-failure
 ```
 
 The executable is `build-linux/nrpc_server`. CMake discovers libuv and mbedTLS
 through their CMake packages or `pkg-config`. Linux serial support uses the
-native POSIX `termios` API and needs no additional serial library. The Windows
-LCard and NI-DAQmx backends are disabled automatically.
+native POSIX `termios` API and needs no additional serial library. The LCard
+and NI-DAQmx function ranges are still registered; calls return runtime load
+errors because those vendor runtimes are Windows-only.
 
 Create an optimized build without tests as follows:
 
 ```sh
 cmake -S . -B build-linux-release \
+  -DPLATFORM=linux \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=OFF
 cmake --build build-linux-release --parallel
 ./build-linux-release/nrpc_server 9000
 ```
 
-### Build options
+### Build settings
 
-| Option | Default | Purpose |
+| Setting | Default | Purpose |
 | --- | --- | --- |
+| `PLATFORM` | host platform | Must be `windows` or `linux` |
+| `CMAKE_BUILD_TYPE` | `Debug` | Single-config generators only; must be `Debug` or `Release` |
 | `BUILD_TESTING` | `ON` | Build the C++ test suite |
-| `NRPC_FETCH_GTEST` | `ON` | Download GoogleTest when no installed package is found |
-| `NRPC_ENABLE_TLS` | `ON` | Build TLS support when mbedTLS is available |
-| `NRPC_ENABLE_SERIAL_BACKEND` | `ON` | Build serial functions 32 through 35 |
-| `NRPC_ENABLE_LCARD_BACKEND` | `ON` | Build the Windows LCard backend |
-| `NRPC_ENABLE_NIDAQMX_BACKEND` | `ON` | Build the Windows NI-DAQmx backend |
+| `NRPC_THIRDPARTY_DIR` | `thirdparty` | Windows dependency directory containing `include/` and `libs/` |
+| `NRPC_LCARD_LIBRARY_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIN` | Default LCard runtime DLL lookup directory |
+| `NRPC_LCARD_BIOS_DIR` | `C:\Program Files (x86)\LCard\LIBRARY\BIOS` | Default LCard BIOS/PLD lookup directory |
+| `NRPC_PYTHON_CLIENT_SOURCE_DIR` | auto-detected | Optional Python client tree for integration tests |
 
-A Debug build enables complete request and response hex dumps. Release builds
-retain `ERROR`, `WARN`, and `INFO` logging but omit those dumps. Set
-`UV_THREADPOOL_SIZE` before starting the server to change libuv's worker count.
+Visual Studio and other multi-config generators expose only `Debug` and
+`Release`. The built-in TCP, serial, LCard, and NI-DAQmx backend APIs are always
+compiled and registered. TLS is compiled when mbedTLS is found; otherwise the
+server builds without TLS support and reports an error if TLS certificates are
+configured at runtime.
+
+Packet hex dumps are disabled by default. Enable them at runtime with
+`packet_dump = true` in the server configuration.
 
 To install only the server executable into a staging directory:
 
@@ -143,6 +163,78 @@ Choose a different file with:
 ./build/nrpc_server 9000 --log-file /var/log/nrpc/server.log
 ```
 
+### Server configuration
+
+The server can load an `.ini` file at startup:
+
+```sh
+./build/nrpc_server --config nrpc-server.ini
+```
+
+Example `nrpc-server.ini`:
+
+```ini
+[server]
+host = 0.0.0.0
+port = 9000
+workers = 4
+backlog = 128
+max_payload_size = 16777216
+arena_size = 1048576
+default_timeout_ms = 0
+
+[logging]
+file = nrpc.log
+packet_dump = false
+
+[tls]
+enabled = false
+certificate = server.crt
+private_key = server.key
+```
+
+The `[server]` section controls the listener and request execution:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `host` | `0.0.0.0` | IPv4 address to bind |
+| `port` | `9000` | TCP port to bind |
+| `workers` | libuv default | Sets `UV_THREADPOOL_SIZE` for blocking backend work |
+| `backlog` | `128` | TCP listen backlog |
+| `max_payload_size` | `16777216` | Maximum nRPC request payload in bytes |
+| `arena_size` | `1048576` | Per-request response arena size in bytes |
+| `default_timeout_ms` | `0` | Timeout used when a request has no timeout; `0` disables the default |
+
+The `[logging]` section controls log output:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `file` | `nrpc.log` | Log file path |
+| `packet_dump` | `false` | Write complete `RX Request` and `TX Response` packet hex dumps |
+
+The `[tls]` section supports:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `enabled` | `false` | Enable TLS for the listener |
+| `certificate` | empty | Server certificate path, PEM or DER |
+| `private_key` | empty | Matching private key path, PEM or DER |
+
+TLS requires both `certificate` and `private_key` when `enabled = true`.
+Boolean values accept `true/false`, `yes/no`, `on/off`, `enabled/disabled`,
+and `1/0`.
+
+Command-line options are still available and are useful for service overrides:
+
+```sh
+./build/nrpc_server --config nrpc-server.ini --host 127.0.0.1 --workers 8
+```
+
+Supported options are `--config PATH`, `--host HOST`, positional `port`,
+`--log-file PATH`, `--workers N`, `--tls-cert PATH`, `--tls-key PATH`, and
+`--no-tls`. When both a config file and command-line options are used, later
+arguments override earlier values.
+
 To encrypt nRPC client connections with mbedTLS, build with mbedTLS installed
 (or place its headers and libraries under `thirdparty` on Windows), then pass a
 server certificate and matching private key:
@@ -154,8 +246,8 @@ server certificate and matching private key:
 TLS is opt-in; without these two options the server continues to accept plain
 TCP connections. A TLS-enabled listener accepts TLS connections only.
 
-Each line is flushed immediately. Debug builds write complete `RX Request` and
-`TX Response` packet hex dumps to the same file.
+Each line is flushed immediately. When `packet_dump = true`, complete
+`RX Request` and `TX Response` packet hex dumps are written to the same file.
 
 The sample executable registers two mock functions:
 
@@ -226,7 +318,7 @@ disconnect.
 | Index | Operation | Arguments | Result |
 | ---: | --- | --- | --- |
 | 48 | Open | `uint32 slot`, `uint32 board type`, `string BIOS path` | `uint64 handle` |
-| 49 | IoAsync | handle, operation, rate, mode, count/mask, channels, data | actual rate, data |
+| 49 | LCard I/O | handle, operation, rate, mode, count, channels, data | actual rate, data |
 | 50 | Slot info | `uint64 handle` | board type, DSP type, IRQ |
 | 51 | Load BIOS | `uint64 handle`, `string path` | no variables |
 | 52 | Close | `uint64 handle` | no variables |
@@ -235,14 +327,24 @@ The server rejects open when the physical slot's `BoardType` differs from the
 requested type. Supported values are PCI A `5`, PCI B `6`, PCI C `14`, L791
 `19`, E440 `30`, E140 `31`, E2010 `32`, E154 `38`, E2010B `39`, and E310 `77`.
 
-The BIOS path may be empty during open. IoAsync operation codes follow wlcomp:
-ADC configure `3`, TTL configure `4`, DAC configure `5`, ADC input `6`, TTL
-input `7`, TTL output `8`, DAC output `9`, and frequency input `10`. Channels
-and data are `uint32` arrays with at most 128 elements. The server validates
-device-specific layouts before calling wlcomp, including E310 ADC masks and
-four-value reads, L791 paired DAC output, E140 dual DAC output, E154 8-bit DAC
-values, E2010's lack of asynchronous ADC input, and PCI C-only TTL direction
-configuration.
+The BIOS path may be empty during open. In that case the native Windows driver
+looks for a board-matching `.bio`, `.pld`, or `.bin` file in the default BIOS
+directory and attempts to load it automatically when found. Automatic BIOS
+loading is best-effort because some boards or driver states reject `LoadBios`
+when firmware is already initialized or not required; an explicit BIOS path
+still fails open if `LoadBios` fails. Set `NRPC_LCARD_BIOS_DIR` in the server
+environment, or configure `-DNRPC_LCARD_BIOS_DIR=...`, to use a different
+directory. Function `49` supports ADC input `6` through the vendor stream
+pipeline (`RequestBufferStream`, `FillDAQparameters`, `SetParametersStream`,
+`InitStartLDevice`, `StartLDevice`, buffer read, `StopLDevice`) and DAC output
+`9` through `IoAsync`. TTL, frequency, word, and memory/register manipulation
+helpers are not exposed. Channels and data are `uint32` arrays with at most 128
+elements. The server validates device-specific layouts before calling wlcomp,
+including L791 paired DAC output, E140 dual DAC output, and E154 8-bit DAC
+values. For E140 and E440 ADC input, the single channel value may include LCard
+channel mode bits: differential `0`, zero calibration `16`, or
+single-ended/common-ground `32`; for E2010/E2010B the `mode` argument carries
+the ADC input mask.
 
 ## NI-DAQmx Backend
 
@@ -312,7 +414,6 @@ location explicitly:
 
 ```sh
 cmake -S . -B build \
-  -DNRPC_ENABLE_PYTHON_INTEGRATION_TESTS=ON \
   -DNRPC_PYTHON_CLIENT_SOURCE_DIR=/path/to/nrpc-python-client
 ```
 
@@ -380,11 +481,11 @@ commands. The end-to-end test starts this simulator and the actual compiled
 `nrpc_server`, then routes SCPI traffic through TCP backend functions 16-19.
 
 Cross-repository tests require Python 3.10 or newer and the standalone client
-repository. Use a Debug build and verbose CTest output to see listener logs and
-full nRPC packet dumps:
+repository. Use verbose CTest output and `packet_dump = true` in the server
+configuration to see listener logs and full nRPC packet dumps:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build -V -R integration.tcp_backend_scpi
 ```

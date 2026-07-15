@@ -73,6 +73,29 @@ public:
         return result;
     }
 
+    std::expected<nrpc::LCardAdcFrameResult, nrpc::BackendError> adc_frame(
+        const nrpc::LCardAdcFrameParameters& parameters) override {
+        frame_channel_count = parameters.channel_count;
+        frame_rate = parameters.rate;
+        frame_samples_per_channel = parameters.samples_per_channel;
+        frame_start_channel = parameters.start_channel;
+        frame_end_channel = parameters.end_channel;
+        frame_mode = parameters.mode;
+        frame_auto_init = parameters.auto_init;
+        nrpc::LCardAdcFrameResult result{
+            parameters.rate / 2.0,
+            parameters.channel_count,
+            parameters.samples_per_channel,
+            {},
+        };
+        result.data.resize(
+            parameters.channel_count * parameters.samples_per_channel);
+        for (std::size_t index = 0; index < result.data.size(); ++index) {
+            result.data[index] = static_cast<std::uint32_t>(100 + index);
+        }
+        return result;
+    }
+
     void close() noexcept override {}
 
     std::string bios;
@@ -81,6 +104,13 @@ public:
     std::uint32_t mode{};
     std::uint32_t channel_count{};
     std::vector<std::uint32_t> channels;
+    double frame_rate{};
+    std::uint32_t frame_channel_count{};
+    std::uint32_t frame_samples_per_channel{};
+    std::uint32_t frame_start_channel{};
+    std::uint32_t frame_end_channel{};
+    std::uint32_t frame_mode{};
+    bool frame_auto_init{};
 };
 
 class FakeDriver final : public nrpc::LCardDriver {
@@ -201,6 +231,74 @@ TEST(LCardBackend, OpensRunsAsyncIoReportsSlotAndCloses) {
         nrpc::lcard_function::close, context, handle_argument, arena);
     ASSERT_FALSE(closed_again.has_value());
     EXPECT_EQ(closed_again.error().code, nrpc::lcard_error::invalid_handle);
+}
+
+TEST(LCardBackend, RunsAdcFrameWithExplicitShape) {
+    auto driver = std::make_shared<FakeDriver>();
+    nrpc::Dispatcher dispatcher;
+    nrpc::register_lcard_backend(dispatcher, driver);
+    nrpc::ResourceManager resources;
+    nrpc::Arena arena(4096);
+    const nrpc::RequestContext context{11, 500, resources};
+
+    const auto slot = u32(0);
+    const auto board =
+        u32(static_cast<std::uint32_t>(nrpc::LCardBoardType::e440));
+    const auto bios = text("");
+    const std::array open_arguments{
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, slot},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, board},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::string,
+            static_cast<std::uint32_t>(bios.size()),
+            bios},
+    };
+    const auto opened = dispatcher.dispatch(
+        nrpc::lcard_function::open, context, open_arguments, arena);
+    ASSERT_TRUE(opened.has_value());
+    const auto handle = decode_u64(opened->front().data);
+
+    arena.reset();
+    const auto handle_data = u64(handle);
+    const auto channel_count = u32(2);
+    const auto rate = f64(400.0);
+    const auto samples = u32(3);
+    const auto start_channel = u32(1);
+    const auto end_channel = u32(2);
+    const auto mode = u32(32);
+    const std::vector<std::byte> auto_init{std::byte{1}};
+    const std::array frame_arguments{
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint64, 1, handle_data},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, channel_count},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::float64, 1, rate},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, samples},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, start_channel},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, end_channel},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::uint32, 1, mode},
+        nrpc::protocol::Variable{
+            nrpc::protocol::DataType::boolean, 1, auto_init},
+    };
+    const auto frame_result = dispatcher.dispatch(
+        nrpc::lcard_function::adc_frame, context, frame_arguments, arena);
+    ASSERT_TRUE(frame_result.has_value());
+    ASSERT_EQ(frame_result->size(), 4U);
+    EXPECT_EQ(driver->last_session->frame_rate, 400.0);
+    EXPECT_EQ(driver->last_session->frame_channel_count, 2U);
+    EXPECT_EQ(driver->last_session->frame_samples_per_channel, 3U);
+    EXPECT_EQ(driver->last_session->frame_start_channel, 1U);
+    EXPECT_EQ(driver->last_session->frame_end_channel, 2U);
+    EXPECT_EQ(driver->last_session->frame_mode, 32U);
+    EXPECT_TRUE(driver->last_session->frame_auto_init);
+    EXPECT_EQ((*frame_result)[3].element_count, 6U);
 }
 
 TEST(LCardBackend, RejectsInvalidAsyncOperationBeforeCallingDevice) {

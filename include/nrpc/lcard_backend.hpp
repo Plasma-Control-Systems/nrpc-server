@@ -6,6 +6,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "nrpc/dispatcher.hpp"
 
@@ -17,6 +18,7 @@ inline constexpr std::uint8_t io_async = 49;
 inline constexpr std::uint8_t slot_info = 50;
 inline constexpr std::uint8_t load_bios = 51;
 inline constexpr std::uint8_t close = 52;
+inline constexpr std::uint8_t adc_frame = 53;
 }  // namespace lcard_function
 
 namespace lcard_error {
@@ -66,12 +68,31 @@ struct LCardAsyncParameters {
     std::uint32_t channel_count;
     std::span<const std::uint32_t> channels;
     std::span<const std::uint32_t> data;
+    std::uint32_t timeout_ms;
 };
 
 struct LCardAsyncResult {
     double rate;
     std::uint32_t channel_count;
     std::array<std::uint32_t, 128> data;
+};
+
+struct LCardAdcFrameParameters {
+    double rate;
+    std::uint32_t mode;
+    std::uint32_t channel_count;
+    std::uint32_t samples_per_channel;
+    std::uint32_t start_channel;
+    std::uint32_t end_channel;
+    std::uint32_t timeout_ms;
+    bool auto_init;
+};
+
+struct LCardAdcFrameResult {
+    double rate;
+    std::uint32_t channel_count;
+    std::uint32_t samples_per_channel;
+    std::vector<std::uint32_t> data;
 };
 
 class LCardSession {
@@ -86,6 +107,8 @@ public:
         std::string_view path) = 0;
     virtual std::expected<LCardAsyncResult, BackendError> io_async(
         const LCardAsyncParameters& parameters) = 0;
+    virtual std::expected<LCardAdcFrameResult, BackendError> adc_frame(
+        const LCardAdcFrameParameters& parameters) = 0;
     virtual void close() noexcept = 0;
 };
 
