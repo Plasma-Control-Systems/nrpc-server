@@ -1,0 +1,4 @@
+#include <windows.h>
+#include "resource.h"
+
+IDI_NRPC_SERVER ICON "nrpc-server.ico"

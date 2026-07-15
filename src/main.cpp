@@ -23,6 +23,9 @@
 #include "nrpc/serial_backend.hpp"
 #endif
 #include "nrpc/tcp_backend.hpp"
+#ifdef _WIN32
+#include "windows_notification_icon.hpp"
+#endif
 
 int main(int argc, char** argv) {
     std::uint16_t port = 9000;
@@ -150,6 +153,9 @@ int main(int argc, char** argv) {
              .tls_private_key_path = tls_private_key.string()},
             dispatcher, resources, logger);
         server.start();
+#ifdef _WIN32
+        nrpc::WindowsNotificationIcon notification_icon(port);
+#endif
         server.run();
     } catch (const std::exception& exception) {
         logger.log(nrpc::LogLevel::error, exception.what());
