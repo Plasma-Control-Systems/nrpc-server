@@ -70,6 +70,72 @@ TEST(ApplicationConfigTest, LoadsIniAndAllowsLaterArgumentsToOverrideIt) {
     EXPECT_TRUE(result.config.packet_dump_enabled);
 }
 
+TEST(ApplicationConfigTest, LoadsAutomaticIniBeforeCommandLineArguments) {
+    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("nrpc-auto-config-test-" + std::to_string(suffix) + ".ini");
+    {
+        std::ofstream output(path);
+        ASSERT_TRUE(output);
+        output << "[server]\n"
+                  "host = 0.0.0.0\n"
+                  "port = 9001\n"
+                  "backlog = 64\n";
+    }
+
+    constexpr std::array arguments{
+        std::string_view{"--host"}, std::string_view{"127.0.0.1"},
+        std::string_view{"9100"},
+    };
+    const auto result = nrpc::parse_application_config(arguments, path);
+    std::filesystem::remove(path);
+
+    EXPECT_EQ(result.config.server.host, "127.0.0.1");
+    EXPECT_EQ(result.config.server.port, 9100);
+    EXPECT_EQ(result.config.server.backlog, 64);
+}
+
+TEST(ApplicationConfigTest, IgnoresMissingAutomaticIni) {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "nrpc-missing-automatic-config.ini";
+    std::filesystem::remove(path);
+
+    constexpr std::array arguments{std::string_view{"--host"},
+                                   std::string_view{"127.0.0.1"}};
+    const auto result = nrpc::parse_application_config(arguments, path);
+
+    EXPECT_EQ(result.config.server.host, "127.0.0.1");
+}
+
+TEST(ApplicationConfigTest, DisabledIniTlsStaysDisabledWhenPathsArePresent) {
+    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("nrpc-disabled-tls-test-" + std::to_string(suffix) + ".ini");
+    {
+        std::ofstream output(path);
+        ASSERT_TRUE(output);
+        output << "[tls]\n"
+                  "enabled = false\n"
+                  "certificate = server.crt\n"
+                  "private_key = server.key\n";
+    }
+
+    const std::array<std::string_view, 0> arguments{};
+    const auto result = nrpc::parse_application_config(arguments, path);
+    std::filesystem::remove(path);
+
+    EXPECT_FALSE(result.config.tls_enabled);
+    EXPECT_TRUE(result.config.server.tls_certificate_path.empty());
+    EXPECT_TRUE(result.config.server.tls_private_key_path.empty());
+}
+
+TEST(ApplicationConfigTest, AutomaticIniPathIsNextToExecutable) {
+    const auto path = nrpc::automatic_application_config_path();
+
+    EXPECT_EQ(path.filename(), "nrpc-server.ini");
+    EXPECT_TRUE(path.is_absolute());
+}
+
 TEST(ApplicationConfigTest, RejectsInvalidWorkerCount) {
     constexpr std::array arguments{std::string_view{"--workers"},
                                    std::string_view{"0"}};

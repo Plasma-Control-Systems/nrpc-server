@@ -30,7 +30,8 @@ int main(int argc, char** argv) {
 
     nrpc::ApplicationConfig config;
     try {
-        auto parsed = nrpc::parse_application_config(arguments);
+        auto parsed = nrpc::parse_application_config(
+            arguments, nrpc::automatic_application_config_path());
         if (parsed.help_requested) {
             std::cout << nrpc::application_usage();
             return 0;

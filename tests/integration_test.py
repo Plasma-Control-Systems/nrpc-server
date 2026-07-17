@@ -1,4 +1,5 @@
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -179,6 +180,50 @@ class ClientServerTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 1002)
             with open(log_path, encoding="utf-8") as log_file:
                 self.assertIn("UV_THREADPOOL_SIZE=2", log_file.read())
+        finally:
+            server.terminate()
+            try:
+                server.wait(2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+
+    def test_ini_next_to_executable_is_loaded_automatically(self):
+        port = available_port()
+        executable_directory = os.path.join(
+            self.temp_directory.name, "automatic-config-server"
+        )
+        working_directory = os.path.join(
+            self.temp_directory.name, "automatic-config-working-directory"
+        )
+        os.makedirs(executable_directory)
+        os.makedirs(working_directory)
+        server_path = shutil.copy2(
+            os.environ["NRPC_SERVER"], executable_directory
+        )
+        log_path = os.path.join(executable_directory, "automatic-config.log")
+        config_path = os.path.join(executable_directory, "nrpc-server.ini")
+        with open(config_path, "w", encoding="utf-8") as config_file:
+            config_file.write(
+                "[server]\n"
+                "host = 127.0.0.1\n"
+                f"port = {port}\n"
+                "\n"
+                "[logging]\n"
+                f"file = {log_path}\n"
+            )
+
+        server = subprocess.Popen(
+            [server_path],
+            cwd=working_directory,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            wait_for_server(server, port)
+            with NrpcClient("127.0.0.1", port) as client:
+                self.assertEqual(client.call(0, ["automatic"]), ["automatic"])
+            self.assertTrue(os.path.isfile(log_path))
         finally:
             server.terminate()
             try:

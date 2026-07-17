@@ -7,9 +7,16 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <vector>
 
 #ifdef _WIN32
 #include <stdlib.h>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace nrpc {
@@ -208,9 +215,28 @@ void load_application_config(const std::filesystem::path& path,
 
 ApplicationConfigResult parse_application_config(
     std::span<const std::string_view> arguments) {
+    return parse_application_config(arguments, std::filesystem::path{});
+}
+
+ApplicationConfigResult parse_application_config(
+    std::span<const std::string_view> arguments,
+    const std::filesystem::path& automatic_config_path) {
     ApplicationConfigResult result;
     bool port_seen = false;
-    bool tls_option_seen = false;
+
+    if (!automatic_config_path.empty()) {
+        std::error_code error;
+        const bool config_exists =
+            std::filesystem::exists(automatic_config_path, error);
+        if (error) {
+            throw std::runtime_error("failed to inspect automatic config file: " +
+                                     automatic_config_path.string() + ": " +
+                                     error.message());
+        }
+        if (config_exists) {
+            load_application_config(automatic_config_path, result.config);
+        }
+    }
 
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const std::string_view argument = arguments[index];
@@ -238,10 +264,8 @@ ApplicationConfigResult parse_application_config(
                 result.config.server.tls_private_key_path = value;
             }
             result.config.tls_enabled = true;
-            tls_option_seen = true;
         } else if (argument == "--no-tls") {
             result.config.tls_enabled = false;
-            tls_option_seen = true;
         } else if (argument == "--help" || argument == "-h") {
             result.help_requested = true;
             return result;
@@ -260,10 +284,6 @@ ApplicationConfigResult parse_application_config(
         }
     }
 
-    const bool tls_paths_present =
-        !result.config.server.tls_certificate_path.empty() &&
-        !result.config.server.tls_private_key_path.empty();
-    if (!tls_option_seen && tls_paths_present) result.config.tls_enabled = true;
     if (result.config.tls_enabled &&
         (result.config.server.tls_certificate_path.empty() ||
          result.config.server.tls_private_key_path.empty())) {
@@ -274,6 +294,36 @@ ApplicationConfigResult parse_application_config(
         result.config.server.tls_private_key_path.clear();
     }
     return result;
+}
+
+std::filesystem::path automatic_application_config_path() {
+#ifdef _WIN32
+    std::vector<wchar_t> buffer(256);
+    for (;;) {
+        const DWORD length = GetModuleFileNameW(
+            nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length == 0) {
+            throw std::runtime_error(
+                "failed to determine executable path: " +
+                std::system_category().message(
+                    static_cast<int>(GetLastError())));
+        }
+        if (length < buffer.size()) {
+            return std::filesystem::path(buffer.data(), buffer.data() + length)
+                       .parent_path() /
+                   "nrpc-server.ini";
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+#else
+    std::error_code error;
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+    if (error) {
+        throw std::runtime_error("failed to determine executable path: " +
+                                 error.message());
+    }
+    return executable.parent_path() / "nrpc-server.ini";
+#endif
 }
 
 void configure_worker_pool(std::size_t worker_count) {

@@ -227,7 +227,9 @@ Choose a different file with:
 
 ### Server configuration
 
-The server can load an `.ini` file at startup:
+At startup, the server automatically loads `nrpc-server.ini` when that file is
+located in the same directory as the executable. This works independently of
+the current working directory. You can also load an explicit `.ini` file:
 
 ```sh
 ./build/nrpc_server --config nrpc-server.ini
@@ -294,8 +296,9 @@ Command-line options are still available and are useful for service overrides:
 
 Supported options are `--config PATH`, `--host HOST`, positional `port`,
 `--log-file PATH`, `--workers N`, `--tls-cert PATH`, `--tls-key PATH`, and
-`--no-tls`. When both a config file and command-line options are used, later
-arguments override earlier values.
+`--no-tls`. The automatically discovered file is loaded first, so explicit
+configuration files and command-line arguments override its values in command-line
+order.
 
 To encrypt nRPC client connections with mbedTLS, build with mbedTLS installed
 (or place its headers and libraries under `thirdparty` on Windows), then pass a
@@ -602,7 +605,8 @@ Windows notification icon is created, so the log is the primary error source.
 
 ### A TLS client receives a handshake or certificate error
 
-TLS is enabled only when both certificate and private-key paths are configured.
+For INI configuration, TLS is enabled only when `enabled = true` and both the
+certificate and private-key paths are configured.
 A TLS listener accepts TLS connections only; a plaintext client cannot share
 that port. Confirm that CMake found mbedTLS, that the certificate and key match,
 and that the client verifies the DNS name present in the certificate.
