@@ -3,6 +3,68 @@
 C++23 nRPC server built on libuv. The wire format and behavior follow
 [SPEC.md](SPEC.md).
 
+nRPC exposes blocking equipment APIs through a small typed RPC protocol. A
+client connects once, invokes numeric functions, and receives typed values or
+a structured error. The server keeps socket, serial, NI-DAQmx, and LCard work
+off the event-loop thread and automatically releases client-owned resources
+when a connection closes.
+
+## Features
+
+- Linux and Windows builds from one CMake project
+- persistent plaintext TCP or TLS connections
+- strict, bounded wire decoding with a configurable 16 MiB default payload cap
+- libuv worker-pool isolation for blocking instrument and driver operations
+- connection-scoped handles with automatic disconnect cleanup
+- TCP and native serial backends on supported desktop platforms
+- runtime-loaded NI-DAQmx and LCard drivers without vendor SDK build dependencies
+- INI configuration, command-line overrides, dual stderr/file logging, and
+  optional packet hex dumps
+- C++ unit tests plus end-to-end tests against the sibling Python client
+
+## Documentation map
+
+- This README covers installation, operation, backend contracts, errors, and
+  extending the server.
+- [SPEC.md](SPEC.md) is the authoritative nRPC 0.1.0 wire specification.
+- [lcomp_pipeline.md](lcomp_pipeline.md) documents the board-specific LCard
+  ADC/DAC pipeline.
+- [AGENTS.md](AGENTS.md) contains repository conventions for coding agents and
+  contributors.
+- The sibling `../nrpc-client` repository documents the supported Python API.
+
+## Quick start
+
+After installing the platform dependencies described below, build a local
+server and start it on port 9000.
+
+Linux:
+
+```sh
+cmake -S . -B build -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --build build --parallel
+./build/nrpc_server 9000
+```
+
+Windows, from a Visual Studio Developer PowerShell:
+
+```powershell
+cmake -S . -B build -A x64 -DPLATFORM=windows -DBUILD_TESTING=OFF
+cmake --build build --config Release --parallel
+.\build\Release\nrpc_server.exe 9000
+```
+
+In another shell, install the sibling client and call the built-in echo
+function:
+
+```sh
+python -m pip install --editable ../nrpc-client
+python ../nrpc-client/examples/basic_rpc.py --host 127.0.0.1 --port 9000
+```
+
+Function `0` echoes its arguments. It is useful for verifying framing, typed
+values, TLS, and deployment before connecting real equipment.
+
 ## Build
 
 The project requires CMake 3.20 or newer, a C++23 compiler with
@@ -129,7 +191,7 @@ cmake --build build-linux-release --parallel
 | `CMAKE_BUILD_TYPE` | `Debug` | Single-config generators only; must be `Debug` or `Release` |
 | `BUILD_TESTING` | `ON` | Build the C++ test suite |
 | `NRPC_THIRDPARTY_DIR` | `thirdparty` | Windows dependency directory containing `include/` and `libs/` |
-| `NRPC_PYTHON_CLIENT_SOURCE_DIR` | auto-detected | Optional Python client tree for integration tests |
+| `NRPC_PYTHON_CLIENT_SOURCE_DIR` | legacy sibling auto-detection | Optional Python client tree for integration tests; set it explicitly for a sibling named `nrpc-client` |
 
 Visual Studio and other multi-config generators expose only `Debug` and
 `Release`. The built-in TCP, serial, and NI-DAQmx backend APIs are always
@@ -402,14 +464,14 @@ associated with a client when its TCP connection ends.
 
 ## Python Client
 
-The synchronous Python library is maintained in the separate
-`nrpc-python-client` repository. Keep both repositories beside each other to
-enable cross-repository integration tests automatically, or configure its
-location explicitly:
+The synchronous Python library is maintained in the separate `nrpc-client`
+repository. Configure its location to enable cross-repository integration
+tests. The current CMake fallback also recognizes a legacy sibling directory
+named `nrpc-python-client`, but an explicitly configured path is preferred:
 
 ```sh
 cmake -S . -B build \
-  -DNRPC_PYTHON_CLIENT_SOURCE_DIR=/path/to/nrpc-python-client
+  -DNRPC_PYTHON_CLIENT_SOURCE_DIR=/path/to/nrpc-client
 ```
 
 Without that path, the server and all C++ unit tests build independently.
@@ -459,6 +521,23 @@ responses.
 
 ## Architecture
 
+The executable in `src/main.cpp` parses configuration, configures libuv's
+worker pool, opens the log, creates the shared `ResourceManager` and
+`Dispatcher`, registers the built-in handlers, and owns the `Server` lifetime.
+
+```text
+client TCP/TLS connection
+    |
+    v
+libuv loop: accept -> 16-byte header -> exact payload -> validate/decode
+    |
+    v
+uv_queue_work: Dispatcher -> backend handler -> response Arena
+    |
+    v
+libuv loop: encode response -> write -> read next request
+```
+
 The libuv loop owns accept, read, framing, timers, and writes. Complete requests
 are dispatched through `uv_queue_work`, keeping blocking equipment drivers off
 the I/O thread. Completion callbacks serialize arena-backed results and return
@@ -466,7 +545,34 @@ them on the loop thread. Connections use reference counting so disconnects and
 timeouts cannot invalidate outstanding worker jobs.
 
 Each connection allows one in-flight request. Reads occur in two framing stages:
-the fixed 16-byte header followed by exactly `Payload Size` bytes.
+the fixed 16-byte header followed by exactly `Payload Size` bytes. Parallel
+clients can still execute concurrently; applications that need concurrent RPCs
+should open multiple client connections.
+
+`Dispatcher` maps an 8-bit function index to a handler. A handler receives a
+`RequestContext` containing the connection's client ID, effective timeout, and
+resource manager. `ResourceManager` keys each native handle by client and handle
+ID so handles cannot be shared across connections. It invokes every handle's
+nonthrowing `close()` during explicit close, disconnect cleanup, or shutdown.
+
+Each job owns a fixed-capacity `Arena`. Handler response views must refer to
+memory that remains valid until serialization, normally arena allocations.
+This makes response memory bounded and avoids allocator churn in the hot path.
+If the arena cannot satisfy an allocation, the handler returns error `1003`.
+
+### Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `include/nrpc/` | public C++ types, constants, and backend contracts |
+| `src/server.cpp` | connection state, libuv reads/writes, timers, worker jobs |
+| `src/protocol.cpp` | strict wire decoding and response encoding |
+| `src/dispatcher.cpp` | function registration and backend error boundary |
+| `src/resource_manager.cpp` | connection-scoped native-resource ownership |
+| `src/*_backend.cpp` | RPC argument validation and backend operations |
+| `src/serial_port_*.cpp` | Win32/POSIX serial implementations |
+| `tests/` | unit, integration, simulated-instrument, and platform tests |
+| `resources/` | Windows executable resources and notification icon |
 
 ## End-to-End Tests
 
@@ -484,3 +590,48 @@ cmake -S . -B build -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build -V -R integration.tcp_backend_scpi
 ```
+
+## Troubleshooting
+
+### The server fails to bind
+
+Check whether another process owns the configured port and whether the bind
+address exists on the host. Use `host = 127.0.0.1` for a local-only server or
+`0.0.0.0` to listen on every IPv4 interface. Binding succeeds before the
+Windows notification icon is created, so the log is the primary error source.
+
+### A TLS client receives a handshake or certificate error
+
+TLS is enabled only when both certificate and private-key paths are configured.
+A TLS listener accepts TLS connections only; a plaintext client cannot share
+that port. Confirm that CMake found mbedTLS, that the certificate and key match,
+and that the client verifies the DNS name present in the certificate.
+
+### Requests time out unexpectedly
+
+The request timeout is supplied by the client in milliseconds. A zero value
+uses `default_timeout_ms`; if both are zero, the server has no default request
+deadline. TCP, serial, NI-DAQmx, and LCard operations also pass the effective
+timeout to their native I/O. Increase `workers` if independent blocking calls
+are waiting for an undersized libuv worker pool.
+
+### A vendor backend reports a load error
+
+NI-DAQmx needs `nicaiu.dll` from an installed NI-DAQmx runtime. LCard needs the
+matching WLCOMP/LComp runtime and architecture. Both are loaded by the running
+server, so changing the Python environment does not fix a missing server-side
+DLL. Review `nrpc.log` for the native loader detail returned with the backend
+error.
+
+### Integration tests are missing
+
+CTest only registers cross-repository tests when it finds Python and the client
+source tree. Set `NRPC_PYTHON_CLIENT_SOURCE_DIR` explicitly during CMake
+configuration, then reconfigure the build directory. The automatic fallback
+currently recognizes only the legacy sibling name `nrpc-python-client`.
+
+### Packet-level debugging
+
+Set `packet_dump = true` under `[logging]` and run the relevant CTest with `-V`.
+Packet dumps can include instrument commands, measurements, or other sensitive
+payloads; disable them after diagnosing the issue.
