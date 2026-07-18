@@ -256,7 +256,8 @@ public:
         const LcardAdcChannel& channel, double timeout) override {
         std::scoped_lock lock(mutex_);
         if (is_adc1(slot_.board_type) && slot_.board_type != board_l791) {
-            auto frame = read_frame_locked(std::span(&channel, 1), 100.0, timeout);
+            auto frame = read_frame_locked(std::span(&channel, 1), 1U, 100.0,
+                                           timeout);
             if (!frame) return std::unexpected(frame.error());
             return frame->codes.front();
         }
@@ -273,10 +274,10 @@ public:
     }
 
     std::expected<LcardAdcFrame, BackendError> read_adc_frame(
-        std::span<const LcardAdcChannel> channels, double rate,
-        double timeout) override {
+        std::span<const LcardAdcChannel> channels, U32 sample_count,
+        double rate, double timeout) override {
         std::scoped_lock lock(mutex_);
-        return read_frame_locked(channels, rate, timeout);
+        return read_frame_locked(channels, sample_count, rate, timeout);
     }
 
     std::expected<void, BackendError> write_dac(
@@ -425,9 +426,14 @@ private:
             if (value.channel > 3U)
                 return std::unexpected(BackendError{lcard_error::invalid_arguments,
                                                      "E20-10 ADC channel is out of range"});
+            if (value.mode == LcardAdcInputMode::common_ground)
+                return std::unexpected(BackendError{lcard_error::unsupported,
+                    "E20-10 common-ground input mode is unsupported"});
             return value.channel;
         }
-        if (value.mode != LcardAdcInputMode::differential)
+        const bool e14 = slot_.board_type == board_e140 ||
+                         slot_.board_type == board_e440;
+        if (!e14 && value.mode != LcardAdcInputMode::differential)
             return std::unexpected(BackendError{lcard_error::unsupported,
                 "use a raw logical channel for this input mode"});
         std::span<const double> ranges;
@@ -446,23 +452,39 @@ private:
             return std::unexpected(BackendError{lcard_error::invalid_arguments,
                                                  "ADC range is not supported"});
         const auto index = static_cast<U32>(iterator - ranges.begin());
-        const U32 max_channel = slot_.board_type == board_l791 ? 15U :
-                                slot_.board_type == board_e154 ? 7U : 31U;
+        const U32 max_channel = e14
+            ? (value.mode == LcardAdcInputMode::common_ground ? 31U : 15U)
+            : slot_.board_type == board_l791 ? 15U
+            : slot_.board_type == board_e154 ? 7U : 31U;
         if (value.channel > max_channel)
             return std::unexpected(BackendError{lcard_error::invalid_arguments,
                                                  "ADC channel is out of range"});
-        return value.channel | (index << 6U);
+        U32 input_mode{};
+        if (e14) {
+            if (value.mode == LcardAdcInputMode::zero)
+                input_mode = 0x10U;
+            else if (value.mode == LcardAdcInputMode::common_ground)
+                input_mode = 0x20U;
+        }
+        return value.channel | input_mode | (index << 6U);
     }
 
     std::expected<LcardAdcFrame, BackendError> read_frame_locked(
-        std::span<const LcardAdcChannel> channels, double rate, double timeout) {
+        std::span<const LcardAdcChannel> channels, U32 sample_count,
+        double rate, double timeout) {
         std::array<U32, 128> logical{};
         for (std::size_t i = 0; i < channels.size(); ++i) {
             auto encoded = logical_channel(channels[i]);
             if (!encoded) return std::unexpected(encoded.error());
             logical[i] = *encoded;
         }
-        U32 requested_words = 131072;
+        U32 point_size = 2;
+        if (library_->functions.get_parameter(
+                &device_, point_size_parameter, &point_size) != l_success ||
+            point_size < 2U)
+            point_size = 2;
+        const U32 words_per_point = (point_size + 1U) / 2U;
+        U32 requested_words = sample_count * words_per_point;
         auto status = library_->functions.request_stream(
             &device_, &requested_words, stream_adc);
         if (status != l_success)
@@ -478,7 +500,9 @@ private:
             parameters.frame_period_ms = 0;
             parameters.fifo = slot_.board_type == board_l791 ? 128U : 0U;
             parameters.irq_step = slot_.board_type == board_l791 ? 2048U : 4096U;
-            parameters.pages = 2;
+            parameters.pages = std::max<U32>(
+                2U, (sample_count + parameters.irq_step - 1U) /
+                         parameters.irq_step);
             parameters.sync_type = 0;
             if (slot_.board_type == board_e2010 || slot_.board_type == board_e2010b) {
                 auto mask = e2010_mask(channels);
@@ -504,7 +528,9 @@ private:
             parameters.frame_period_ms = 0;
             parameters.fifo = (slot_.board_type == board_e140 || slot_.board_type == board_e154) ? 0U : 1024U;
             parameters.irq_step = 4096;
-            parameters.pages = 2;
+            parameters.pages = std::max<U32>(
+                2U, (sample_count + parameters.irq_step - 1U) /
+                         parameters.irq_step);
             parameters.sync_type = (slot_.board_type == board_pcia || slot_.board_type == board_pcib || slot_.board_type == board_pcic) ? 3U : 0U;
             parameters.channel_count = static_cast<U32>(channels.size());
             std::copy_n(logical.begin(), channels.size(), parameters.channels);
@@ -520,6 +546,9 @@ private:
         }
         if (status != l_success)
             return std::unexpected(vendor_error("configure ADC stream", status));
+        if (data == nullptr || sync == nullptr || used < sample_count)
+            return std::unexpected(BackendError{lcard_error::operation_failed,
+                                                 "ADC mapped buffer is too small"});
         if (device2_ == 0U)
             return std::unexpected(BackendError{lcard_error::unsupported,
                                                  "WLCOMP LDEV2 interface is unavailable"});
@@ -530,21 +559,14 @@ private:
             library_->functions.stop_ex(&device2_, stream_adc);
             return std::unexpected(vendor_error("start ADC stream", status));
         }
-        const auto waited = wait_for(sync, static_cast<U32>(channels.size()), timeout);
+        const auto waited = wait_for(sync, sample_count, timeout);
         library_->functions.stop_ex(&device2_, stream_adc);
         if (!waited) return std::unexpected(waited.error());
-        if (data == nullptr)
-            return std::unexpected(BackendError{lcard_error::operation_failed,
-                                                 "ADC mapped buffer is null"});
-        U32 point_size = 2;
-        if (library_->functions.get_parameter(
-                &device_, point_size_parameter, &point_size) != l_success)
-            point_size = 2;
         LcardAdcFrame result;
         result.actual_rate_khz = actual_rate;
-        result.codes.resize(channels.size());
+        result.codes.resize(sample_count);
         const auto* bytes = static_cast<const std::byte*>(data);
-        for (std::size_t i = 0; i < channels.size(); ++i) {
+        for (std::size_t i = 0; i < sample_count; ++i) {
             U16 code{};
             std::memcpy(&code, bytes + i * point_size, sizeof(code));
             result.codes[i] = std::bit_cast<std::int16_t>(code);

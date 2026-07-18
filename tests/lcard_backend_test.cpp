@@ -45,11 +45,15 @@ public:
         last_channels = {channel}; last_timeout = timeout; return -123;
     }
     std::expected<nrpc::LcardAdcFrame, nrpc::BackendError> read_adc_frame(
-        std::span<const nrpc::LcardAdcChannel> channels, double rate,
-        double timeout) override {
+        std::span<const nrpc::LcardAdcChannel> channels,
+        std::uint32_t sample_count, double rate, double timeout) override {
         last_channels.assign(channels.begin(), channels.end());
+        last_sample_count = sample_count;
         last_rate = rate; last_timeout = timeout;
-        return nrpc::LcardAdcFrame{{-1, 2}, 99.5};
+        std::vector<std::int16_t> codes(sample_count);
+        for (std::size_t i = 0; i < codes.size(); ++i)
+            codes[i] = static_cast<std::int16_t>(i);
+        return nrpc::LcardAdcFrame{std::move(codes), 99.5};
     }
     std::expected<void, nrpc::BackendError> write_dac(
         std::uint8_t channel, std::uint16_t code, double timeout) override {
@@ -69,6 +73,7 @@ public:
     std::vector<nrpc::LcardAdcChannel> last_channels;
     std::vector<std::uint16_t> dac0, dac1;
     double last_rate{}, last_timeout{};
+    std::uint32_t last_sample_count{};
     std::uint8_t dac_channel{};
     std::uint16_t dac_code{};
     bool closed{};
@@ -133,12 +138,23 @@ TEST(LcardBackend, OpensReportsMetadataReadsFrameAndCloses) {
     frame_args.insert(frame_args.end(), channels.begin(), channels.end());
     frame_args.push_back(variable(nrpc::protocol::DataType::float64, 1,
                                   floating(100.0)));
+    frame_args.push_back(variable(nrpc::protocol::DataType::uint32, 1,
+                                  integer(8, 4)));
     auto frame = dispatcher.dispatch(nrpc::lcard_function::read_adc_frame,
                                      context, frame_args, arena);
     ASSERT_TRUE(frame); ASSERT_EQ(frame->size(), 2U);
-    EXPECT_EQ(frame->front().element_count, 2U);
+    EXPECT_EQ(frame->front().element_count, 8U);
+    EXPECT_EQ(driver->last->last_sample_count, 8U);
     EXPECT_DOUBLE_EQ(driver->last->last_timeout, 2.5);
     EXPECT_DOUBLE_EQ(driver->last->last_rate, 100.0);
+
+    auto incomplete_args = frame_args;
+    incomplete_args.back() = variable(nrpc::protocol::DataType::uint32, 1,
+                                      integer(7, 4));
+    auto incomplete = dispatcher.dispatch(nrpc::lcard_function::read_adc_frame,
+                                          context, incomplete_args, arena);
+    ASSERT_FALSE(incomplete);
+    EXPECT_EQ(incomplete.error().code, nrpc::lcard_error::invalid_arguments);
 
     const std::vector close_args{
         variable(nrpc::protocol::DataType::uint64, 1, integer(handle, 8))};

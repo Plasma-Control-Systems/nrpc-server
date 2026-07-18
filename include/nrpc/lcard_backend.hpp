@@ -80,8 +80,8 @@ public:
     virtual std::expected<std::int16_t, BackendError> read_adc(
         const LcardAdcChannel& channel, double timeout_seconds) = 0;
     virtual std::expected<LcardAdcFrame, BackendError> read_adc_frame(
-        std::span<const LcardAdcChannel> channels, double rate_khz,
-        double timeout_seconds) = 0;
+        std::span<const LcardAdcChannel> channels, std::uint32_t sample_count,
+        double rate_khz, double timeout_seconds) = 0;
     virtual std::expected<void, BackendError> write_dac(
         std::uint8_t channel, std::uint16_t code, double timeout_seconds) = 0;
     virtual std::expected<LcardDacWriteResult, BackendError> write_dac_frames(

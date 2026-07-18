@@ -19,6 +19,7 @@ std::shared_ptr<LcardDriver> create_lcard_native_driver();
 namespace {
 
 constexpr std::uint32_t max_channels = 128;
+constexpr std::uint32_t max_adc_samples = 131072;
 constexpr std::uint32_t max_dac_frames = 262144;
 
 std::uint64_t read_unsigned(std::span<const std::byte> data) {
@@ -233,20 +234,29 @@ void register_lcard_backend(Dispatcher& dispatcher,
         [](const RequestContext& context,
            std::span<const protocol::Variable> args,
            Arena& arena) -> BackendResult {
-            if (args.size() != 6U ||
+            if ((args.size() != 6U && args.size() != 7U) ||
                 !scalar(args[0], protocol::DataType::uint64, 8) ||
-                !scalar(args[5], protocol::DataType::float64, 8))
+                !scalar(args[5], protocol::DataType::float64, 8) ||
+                (args.size() == 7U &&
+                 !scalar(args[6], protocol::DataType::uint32, 4)))
                 return std::unexpected(BackendError{lcard_error::invalid_arguments,
-                    "LCard ADC frame expects handle, channel arrays, and rate"});
+                    "LCard ADC frame expects handle, channel arrays, rate, and optional sample count"});
             auto channels = channel_arguments(args, 1);
             const auto rate = read_double(args[5].data);
             if (!channels) return std::unexpected(channels.error());
+            const auto sample_count = args.size() == 7U
+                ? static_cast<std::uint32_t>(read_unsigned(args[6].data))
+                : static_cast<std::uint32_t>(channels->size());
             if (!std::isfinite(rate) || rate <= 0.0)
                 return std::unexpected(BackendError{lcard_error::invalid_arguments,
                                                      "ADC rate must be positive"});
+            if (sample_count == 0U || sample_count > max_adc_samples ||
+                sample_count % channels->size() != 0U)
+                return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                    "ADC sample count must contain complete channel scans and not exceed 131072"});
             auto result = with_device(context, read_unsigned(args[0].data),
                 [&](LcardDevice& device) {
-                    return device.read_adc_frame(*channels, rate,
+                    return device.read_adc_frame(*channels, sample_count, rate,
                                                  timeout_seconds(context));
                 });
             if (!result) return std::unexpected(BackendError{lcard_error::invalid_handle,

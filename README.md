@@ -417,7 +417,7 @@ code and the board's metrology data.
 | ---: | --- | --- | --- |
 | 80 | Open | `uint32 slot`, `string firmware_path` | handle, board metadata, capability flags |
 | 81 | Read one ADC code | handle and one channel descriptor | `int16 code` |
-| 82 | Read one ADC frame | handle, channel descriptor arrays, `float64 rate_khz` | `int16[] codes`, actual rate |
+| 82 | Read an ADC buffer | handle, channel descriptor arrays, `float64 rate_khz`, optional `uint32 sample_count` | interleaved `int16[] codes`, actual rate |
 | 83 | Write one DAC code | handle, `uint8 channel`, `uint16 code` | no variables |
 | 84 | Write finite DAC frames | handle, two `uint16[]` arrays, frame rate | frame count, actual rate |
 | 85 | Close | `uint64 handle` | no variables |
@@ -426,6 +426,16 @@ Normalized ADC descriptors contain a physical channel, positive full-scale
 range, and input mode. Advanced callers can pass a complete vendor logical
 channel code. Supported ranges are validated after the board is detected.
 E20-10 uses `AdcIMask` for its 3.0, 1.0, and 0.3 V ranges.
+E14-140 and E14-440 accept channels 0..15 in differential mode and 0..31 in
+common-ground mode. The backend encodes common-ground logical channels with
+bit 5 and rejects physical channel numbers outside the selected mode.
+
+The `int16[]` response's protocol element count is the number of returned ADC
+samples. Samples are interleaved as complete scans: channel 0, channel 1, ...,
+then the next time row. New clients request up to 131,072 samples; when that
+capacity is not divisible by the channel count, they request the largest
+smaller number containing only complete scans. The legacy request without an
+explicit sample count still returns one scan.
 
 Timed DAC frames contain simultaneous DAC0/DAC1 codes. L-7xx and E14 streams
 are interleaved, while L-791 frames are packed into one 32-bit point. Timed
