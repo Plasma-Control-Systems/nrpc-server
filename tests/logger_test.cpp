@@ -63,3 +63,19 @@ TEST(Logger, PacketDumpRequiresRuntimeEnable) {
     EXPECT_NE(enabled.str().find("RX Request function=0 bytes=12ab"),
               std::string::npos);
 }
+
+TEST(Logger, RpcTimingRequiresRuntimeEnable) {
+    std::ostringstream disabled;
+    nrpc::Logger disabled_logger(disabled, nrpc::LogLevel::debug);
+    disabled_logger.rpc_timing("client=7 function=16 status=success",
+                               std::chrono::microseconds(1234));
+    EXPECT_EQ(disabled.str(), "");
+
+    std::ostringstream enabled;
+    nrpc::Logger enabled_logger(enabled, nrpc::LogLevel::debug, false, true);
+    enabled_logger.rpc_timing("client=7 function=16 status=success",
+                              std::chrono::microseconds(1234));
+    EXPECT_NE(enabled.str().find(
+                  "RPC Timing client=7 function=16 status=success duration_us=1234"),
+              std::string::npos);
+}

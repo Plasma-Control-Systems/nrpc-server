@@ -50,6 +50,7 @@ class ClientServerTests(unittest.TestCase):
                 "[logging]\n"
                 f"file = {cls.log_path}\n"
                 "packet_dump = true\n"
+                "rpc_timing = true\n"
             )
         cls.server = subprocess.Popen(
             [
@@ -94,7 +95,7 @@ class ClientServerTests(unittest.TestCase):
         while time.monotonic() < deadline:
             with open(self.log_path, encoding="utf-8") as log_file:
                 contents = log_file.read()
-            if "TX Response" in contents:
+            if "TX Response" in contents and "RPC Timing" in contents:
                 break
             time.sleep(0.01)
         self.assertIn("nRPC listening on", contents)
@@ -102,6 +103,8 @@ class ClientServerTests(unittest.TestCase):
         self.assertIn("RX Request function=0", contents)
         self.assertIn("TX Response function=0", contents)
         self.assertIn("bytes=", contents)
+        self.assertIn("RPC Timing client=", contents)
+        self.assertIn("function=0 status=success duration_us=", contents)
 
     def test_basic_rpc_example(self):
         completed = subprocess.run(

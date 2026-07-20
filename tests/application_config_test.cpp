@@ -49,7 +49,8 @@ TEST(ApplicationConfigTest, LoadsIniAndAllowsLaterArgumentsToOverrideIt) {
                   "backlog = 64\n"
                   "[logging]\n"
                   "file = from-ini.log\n"
-                  "packet_dump = yes\n";
+                  "packet_dump = yes\n"
+                  "rpc_timing = on\n";
     }
 
     const std::string config_path = path.string();
@@ -68,6 +69,7 @@ TEST(ApplicationConfigTest, LoadsIniAndAllowsLaterArgumentsToOverrideIt) {
     EXPECT_EQ(*result.config.worker_count, 3U);
     EXPECT_EQ(result.config.log_path, "from-ini.log");
     EXPECT_TRUE(result.config.packet_dump_enabled);
+    EXPECT_TRUE(result.config.rpc_timing_enabled);
 }
 
 TEST(ApplicationConfigTest, LoadsAutomaticIniBeforeCommandLineArguments) {

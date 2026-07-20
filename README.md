@@ -201,6 +201,8 @@ configured at runtime.
 
 Packet hex dumps are disabled by default. Enable them at runtime with
 `packet_dump = true` in the server configuration.
+Per-call RPC execution timings are also disabled by default. Enable them with
+`rpc_timing = true`; timings are written as `DEBUG` records in microseconds.
 
 To install only the server executable into a staging directory:
 
@@ -250,6 +252,7 @@ default_timeout_ms = 0
 [logging]
 file = nrpc.log
 packet_dump = false
+rpc_timing = false
 
 [tls]
 enabled = false
@@ -275,6 +278,7 @@ The `[logging]` section controls log output:
 | --- | --- | --- |
 | `file` | `nrpc.log` | Log file path |
 | `packet_dump` | `false` | Write complete `RX Request` and `TX Response` packet hex dumps |
+| `rpc_timing` | `false` | Write each RPC handler execution time as a `DEBUG` record in microseconds |
 
 The `[tls]` section supports:
 
@@ -313,6 +317,8 @@ TCP connections. A TLS-enabled listener accepts TLS connections only.
 
 Each line is flushed immediately. When `packet_dump = true`, complete
 `RX Request` and `TX Response` packet hex dumps are written to the same file.
+When `rpc_timing = true`, each completed handler writes a line such as
+`RPC Timing client=1 function=16 status=success duration_us=1234`.
 
 The sample executable registers two mock functions:
 

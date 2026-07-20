@@ -16,6 +16,7 @@ struct ApplicationConfig {
     std::optional<std::size_t> worker_count;
     bool tls_enabled{false};
     bool packet_dump_enabled{false};
+    bool rpc_timing_enabled{false};
 };
 
 struct ApplicationConfigResult {

@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
@@ -385,8 +386,21 @@ private:
             work.timeout_ms,
             connection.server->resources_,
         };
+        const auto started = std::chrono::steady_clock::now();
         auto result = connection.server->dispatcher_.dispatch(
             work.decoded.function_index, context, work.decoded.variables, work.arena);
+        const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started);
+        connection.server->logger_.rpc_timing(
+            result ? concatenate(
+                         "client=", connection.id, " function=",
+                         static_cast<unsigned int>(work.decoded.function_index),
+                         " status=success")
+                   : concatenate(
+                         "client=", connection.id, " function=",
+                         static_cast<unsigned int>(work.decoded.function_index),
+                         " status=error error=", result.error().code),
+            duration);
         if (result) {
             work.response = protocol::encode_response(protocol::Response{
                 .status = protocol::StatusCode::success,

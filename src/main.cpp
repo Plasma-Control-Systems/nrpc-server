@@ -59,8 +59,10 @@ int main(int argc, char** argv) {
 
     nrpc::Logger logger(
         {std::ref(std::clog), std::ref(log_file)},
-        config.packet_dump_enabled ? nrpc::LogLevel::debug : nrpc::LogLevel::info,
-        config.packet_dump_enabled);
+        config.packet_dump_enabled || config.rpc_timing_enabled
+            ? nrpc::LogLevel::debug
+            : nrpc::LogLevel::info,
+        config.packet_dump_enabled, config.rpc_timing_enabled);
     logger.log(nrpc::LogLevel::info,
                "writing server logs to " + config.log_path.string());
     if (config.worker_count) {

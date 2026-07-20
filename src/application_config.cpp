@@ -141,6 +141,10 @@ void apply_config_value(ApplicationConfig& config, std::string section,
                    key == "debug_packets") {
             config.packet_dump_enabled =
                 parse_bool(value, "logging.packet_dump");
+        } else if (key == "rpc_timing" || key == "rpc_timings" ||
+                   key == "debug_rpc_timing") {
+            config.rpc_timing_enabled =
+                parse_bool(value, "logging.rpc_timing");
         } else {
             throw std::runtime_error("unknown logging config key: " + key);
         }

@@ -113,7 +113,7 @@ The exact argument and result schemas are documented in `README.md` and implemen
 
 ## Configuration and running
 
-CLI options are `--config PATH`, `--host HOST`, positional port, `--log-file PATH`, `--workers N`, `--tls-cert PATH`, `--tls-key PATH`, and `--no-tls`. Later CLI arguments override earlier config-file values. INI sections are `[server]` (`host`, `port`, `workers`, `backlog`, `max_payload_size`, `arena_size`, `default_timeout_ms`), `[logging]` (`file`, `packet_dump`), and `[tls]` (`enabled`, `certificate`, `private_key`). TLS requires both certificate and key and is compiled only when mbedTLS is found. Packet dumps are runtime opt-in because they may contain instrument data.
+CLI options are `--config PATH`, `--host HOST`, positional port, `--log-file PATH`, `--workers N`, `--tls-cert PATH`, `--tls-key PATH`, and `--no-tls`. Later CLI arguments override earlier config-file values. INI sections are `[server]` (`host`, `port`, `workers`, `backlog`, `max_payload_size`, `arena_size`, `default_timeout_ms`), `[logging]` (`file`, `packet_dump`, `rpc_timing`), and `[tls]` (`enabled`, `certificate`, `private_key`). TLS requires both certificate and key and is compiled only when mbedTLS is found. Packet dumps and per-call RPC timings are runtime opt-in.
 
 Build and test from the repository root. On Windows use a Visual Studio Developer PowerShell with x64 libuv dependencies under `thirdparty`:
 

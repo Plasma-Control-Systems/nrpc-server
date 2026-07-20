@@ -21,15 +21,19 @@ constexpr std::string_view level_name(LogLevel level) {
 
 }  // namespace
 
-Logger::Logger(std::ostream& output, LogLevel minimum, bool packet_dump_enabled)
+Logger::Logger(std::ostream& output, LogLevel minimum, bool packet_dump_enabled,
+               bool rpc_timing_enabled)
     : outputs_{&output},
       minimum_(minimum),
-      packet_dump_enabled_(packet_dump_enabled) {}
+      packet_dump_enabled_(packet_dump_enabled),
+      rpc_timing_enabled_(rpc_timing_enabled) {}
 
 Logger::Logger(
     std::initializer_list<std::reference_wrapper<std::ostream>> outputs,
-    LogLevel minimum, bool packet_dump_enabled)
-    : minimum_(minimum), packet_dump_enabled_(packet_dump_enabled) {
+    LogLevel minimum, bool packet_dump_enabled, bool rpc_timing_enabled)
+    : minimum_(minimum),
+      packet_dump_enabled_(packet_dump_enabled),
+      rpc_timing_enabled_(rpc_timing_enabled) {
     outputs_.reserve(outputs.size());
     for (auto output : outputs) {
         outputs_.push_back(&output.get());
@@ -75,6 +79,16 @@ void Logger::packet(LogLevel level, std::string_view event,
              << std::to_integer<unsigned int>(byte);
     }
     log(level, dump.str());
+}
+
+void Logger::rpc_timing(std::string_view fields,
+                        std::chrono::microseconds duration) {
+    if (!rpc_timing_enabled_) {
+        return;
+    }
+    std::ostringstream message;
+    message << "RPC Timing " << fields << " duration_us=" << duration.count();
+    log(LogLevel::debug, message.str());
 }
 
 }  // namespace nrpc
