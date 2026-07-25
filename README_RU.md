@@ -178,6 +178,8 @@ workers = 4
 backlog = 128
 max_payload_size = 16777216
 arena_size = 1048576
+max_pending_requests = 256
+max_pending_request_bytes = 268435456
 default_timeout_ms = 0
 
 [logging]
@@ -201,6 +203,8 @@ private_key = server.key
 | `backlog` | `128` | TCP listen backlog |
 | `max_payload_size` | `16777216` | Максимальный payload nRPC-запроса в байтах |
 | `arena_size` | `1048576` | Размер response arena на один запрос в байтах |
+| `max_pending_requests` | `256` | Максимальное число выполняющихся и ожидающих запросов |
+| `max_pending_request_bytes` | `268435456` | Максимальный суммарный payload выполняющихся и ожидающих запросов |
 | `default_timeout_ms` | `0` | Тайм-аут, используемый, когда запрос не содержит тайм-аут; `0` отключает значение по умолчанию |
 
 Секция `[logging]` управляет выводом логов:

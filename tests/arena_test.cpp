@@ -6,6 +6,8 @@
 
 TEST(Arena, AllocatesAlignedMemoryAndResets) {
     nrpc::Arena arena(64);
+    EXPECT_EQ(arena.capacity(), 64U);
+    EXPECT_EQ(arena.used(), 0U);
     const auto first = arena.allocate(3, 1);
     const auto second = arena.allocate(8, 8);
 

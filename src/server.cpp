@@ -8,6 +8,7 @@
 #include <bit>
 #include <chrono>
 #include <cstring>
+#include <new>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -45,6 +46,11 @@ public:
           dispatcher_(dispatcher),
           resources_(resources),
           logger_(logger) {
+        if (config_.max_pending_requests == 0 ||
+            config_.max_pending_request_bytes == 0) {
+            throw std::invalid_argument(
+                "pending request limits must be greater than zero");
+        }
 #if NRPC_HAS_TLS
         const bool has_certificate = !config_.tls_certificate_path.empty();
         const bool has_key = !config_.tls_private_key_path.empty();
@@ -64,7 +70,11 @@ public:
 #endif
         check_uv(uv_loop_init(&loop_), "uv_loop_init");
         server_.data = this;
-        check_uv(uv_tcp_init(&loop_, &server_), "uv_tcp_init");
+        const int tcp_status = uv_tcp_init(&loop_, &server_);
+        if (tcp_status < 0) {
+            uv_loop_close(&loop_);
+            check_uv(tcp_status, "uv_tcp_init");
+        }
     }
 
     ~Impl() {
@@ -137,14 +147,19 @@ private:
         Connection* connection;
         protocol::Request decoded;
         std::uint32_t timeout_ms;
+        std::size_t payload_bytes;
         Arena arena;
         std::vector<std::byte> response;
+        std::atomic_bool canceled{false};
+        bool execution_failed{false};
 
         Work(Connection* connection_value, protocol::Request request_value,
-             std::uint32_t timeout_ms_value, std::size_t arena_size)
+             std::uint32_t timeout_ms_value, std::size_t payload_bytes_value,
+             std::size_t arena_size)
             : connection(connection_value),
               decoded(std::move(request_value)),
               timeout_ms(timeout_ms_value),
+              payload_bytes(payload_bytes_value),
               arena(arena_size) {
             request.data = this;
         }
@@ -158,6 +173,12 @@ private:
         bool restart_request;
     };
 
+    struct CleanupWork {
+        uv_work_t request{};
+        ResourceManager* resources;
+        ClientId client_id;
+    };
+
     struct Connection {
         uv_tcp_t tcp{};
         uv_timer_t timer{};
@@ -169,6 +190,7 @@ private:
         bool timer_initialized{false};
         bool closing{false};
         bool response_sent{false};
+        Work* active_work{nullptr};
 #if NRPC_HAS_TLS
         std::unique_ptr<TlsSession> tls;
 #endif
@@ -238,8 +260,13 @@ private:
     }
 
     static void allocate_read(uv_handle_t*, std::size_t suggested, uv_buf_t* buffer) {
-        const auto size = static_cast<unsigned int>(std::min<std::size_t>(suggested, 64U * 1024U));
-        *buffer = uv_buf_init(new char[size], size);
+        const auto size = static_cast<unsigned int>(
+            std::max<std::size_t>(1U,
+                std::min<std::size_t>(suggested, 64U * 1024U)));
+        *buffer = uv_buf_init(new (std::nothrow) char[size], size);
+        if (buffer->base == nullptr) {
+            buffer->len = 0;
+        }
     }
 
     static void on_read(uv_stream_t* stream, ssize_t count, const uv_buf_t* buffer) {
@@ -323,34 +350,62 @@ private:
                        protocol::to_string(decoded.error()));
             return;
         }
-        connection.server->logger_.packet(
-            LogLevel::debug, "RX Request", connection.input,
-            concatenate("function=", static_cast<unsigned int>(decoded->function_index),
-                        " payload=",
-                        connection.input.size() - protocol::header_size));
+        if (connection.server->logger_.packet_dump_enabled()) {
+            connection.server->logger_.packet(
+                LogLevel::debug, "RX Request", connection.input,
+                concatenate("function=",
+                            static_cast<unsigned int>(decoded->function_index),
+                            " payload=",
+                            connection.input.size() - protocol::header_size));
+        }
         queue_work(connection, std::move(*decoded));
+        if (connection.input.capacity() > 64U * 1024U) {
+            std::vector<std::byte>().swap(connection.input);
+        } else {
+            connection.input.clear();
+        }
     }
 
     static std::uint8_t function_index(const Connection& connection) {
+        if (connection.active_work != nullptr) {
+            return connection.active_work->decoded.function_index;
+        }
         return connection.input.size() > 2
                    ? std::to_integer<std::uint8_t>(connection.input[2])
                    : 0;
     }
 
     static void queue_work(Connection& connection, protocol::Request request) {
+        const auto request_function = request.function_index;
         const std::uint32_t timeout_ms =
             request.timeout_ms != 0 ? request.timeout_ms
                                     : connection.server->config_.default_timeout_ms;
-        auto* work = new Work(&connection, std::move(request),
-                              timeout_ms,
+        std::size_t payload_bytes = request.variables.size() *
+                                    protocol::variable_entry_size;
+        for (const auto& variable : request.variables) {
+            payload_bytes += variable.data.size();
+        }
+        auto& server = *connection.server;
+        if (server.pending_work_count_ >= server.config_.max_pending_requests ||
+            payload_bytes > server.config_.max_pending_request_bytes ||
+            server.pending_work_bytes_ >
+                server.config_.max_pending_request_bytes - payload_bytes) {
+            send_error(connection, request_function, error_code::internal_error, true,
+                       "server request queue capacity exceeded");
+            return;
+        }
+        auto* work = new Work(&connection, std::move(request), timeout_ms,
+                              payload_bytes,
                               connection.server->config_.arena_size);
+        connection.active_work = work;
         connection.retain();
         if (work->timeout_ms != 0) {
             if (!connection.timer_initialized) {
                 if (uv_timer_init(&connection.server->loop_, &connection.timer) < 0) {
                     delete work;
+                    connection.active_work = nullptr;
                     connection.release();
-                    send_error(connection, function_index(connection),
+                    send_error(connection, request_function,
                                error_code::internal_error, true,
                                "failed to initialize request timeout timer");
                     return;
@@ -370,58 +425,80 @@ private:
                 uv_timer_stop(&connection.timer);
             }
             delete work;
+            connection.active_work = nullptr;
             connection.release();
-            send_error(connection, function_index(connection),
+            send_error(connection, request_function,
                        error_code::internal_error, true,
                        concatenate("failed to queue request work: ",
-                                   uv_strerror(status)));
+                                    uv_strerror(status)));
+            return;
         }
+        ++server.pending_work_count_;
+        server.pending_work_bytes_ += payload_bytes;
     }
 
     static void execute_work(uv_work_t* request) {
         auto& work = *static_cast<Work*>(request->data);
-        auto& connection = *work.connection;
-        const RequestContext context{
-            connection.id,
-            work.timeout_ms,
-            connection.server->resources_,
-        };
-        const auto started = std::chrono::steady_clock::now();
-        auto result = connection.server->dispatcher_.dispatch(
-            work.decoded.function_index, context, work.decoded.variables, work.arena);
-        const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - started);
-        connection.server->logger_.rpc_timing(
-            result ? concatenate(
-                         "client=", connection.id, " function=",
-                         static_cast<unsigned int>(work.decoded.function_index),
-                         " status=success")
-                   : concatenate(
-                         "client=", connection.id, " function=",
-                         static_cast<unsigned int>(work.decoded.function_index),
-                         " status=error error=", result.error().code),
-            duration);
-        if (result) {
-            work.response = protocol::encode_response(protocol::Response{
-                .status = protocol::StatusCode::success,
-                .function_index = work.decoded.function_index,
-                .error_code = 0,
-                .variables = std::move(*result),
-            });
-        } else {
-            work.response = protocol::encode_response(protocol::Response{
-                .status = protocol::StatusCode::error,
-                .function_index = work.decoded.function_index,
-                .error_code = result.error().code,
-                .error_message = result.error().message,
-                .variables = {},
-            });
+        if (work.canceled.load(std::memory_order_acquire)) {
+            return;
+        }
+        try {
+            auto& connection = *work.connection;
+            const RequestContext context{
+                connection.id,
+                work.timeout_ms,
+                connection.server->resources_,
+                &work.canceled,
+            };
+            const auto started = std::chrono::steady_clock::now();
+            auto result = connection.server->dispatcher_.dispatch(
+                work.decoded.function_index, context, work.decoded.variables,
+                work.arena);
+            const auto duration =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - started);
+            if (connection.server->logger_.rpc_timing_enabled()) {
+                connection.server->logger_.rpc_timing(
+                    result ? concatenate(
+                                 "client=", connection.id, " function=",
+                                 static_cast<unsigned int>(
+                                     work.decoded.function_index),
+                                 " status=success")
+                           : concatenate(
+                                 "client=", connection.id, " function=",
+                                 static_cast<unsigned int>(
+                                     work.decoded.function_index),
+                                 " status=error error=", result.error().code),
+                    duration);
+            }
+            if (result) {
+                work.response = protocol::encode_response(protocol::Response{
+                    .status = protocol::StatusCode::success,
+                    .function_index = work.decoded.function_index,
+                    .error_code = 0,
+                    .variables = std::move(*result),
+                });
+            } else {
+                work.response = protocol::encode_response(protocol::Response{
+                    .status = protocol::StatusCode::error,
+                    .function_index = work.decoded.function_index,
+                    .error_code = result.error().code,
+                    .error_message = result.error().message,
+                    .variables = {},
+                });
+            }
+        } catch (...) {
+            work.execution_failed = true;
+            work.response.clear();
         }
     }
 
     static void after_work(uv_work_t* request, int status) {
         std::unique_ptr<Work> work(static_cast<Work*>(request->data));
         auto& connection = *work->connection;
+        connection.active_work = nullptr;
+        --connection.server->pending_work_count_;
+        connection.server->pending_work_bytes_ -= work->payload_bytes;
         if (connection.timer_initialized) {
             uv_timer_stop(&connection.timer);
         }
@@ -430,9 +507,16 @@ private:
                 send_error(connection, work->decoded.function_index,
                            error_code::internal_error, true,
                            "request work was canceled");
+            } else if (work->execution_failed) {
+                send_error(connection, work->decoded.function_index,
+                           error_code::internal_error, true,
+                           "request processing failed");
             } else {
                 send_response(connection, std::move(work->response), false);
             }
+        }
+        if (connection.closing) {
+            queue_client_cleanup(*connection.server, connection.id);
         }
         connection.release();
     }
@@ -440,6 +524,11 @@ private:
     static void on_timeout(uv_timer_t* timer) {
         auto& connection = *static_cast<Connection*>(timer->data);
         if (!connection.response_sent && !connection.closing) {
+            if (connection.active_work != nullptr) {
+                connection.active_work->canceled.store(true, std::memory_order_release);
+                uv_cancel(reinterpret_cast<uv_req_t*>(
+                    &connection.active_work->request));
+            }
             send_error(connection, function_index(connection),
                        error_code::timeout, true,
                        "request timed out on the server");
@@ -467,11 +556,14 @@ private:
         }
         connection.response_sent = true;
         const auto response_status = std::to_integer<unsigned int>(response[0]);
-        connection.server->logger_.packet(
-            LogLevel::debug, "TX Response", response,
-            concatenate("function=", std::to_integer<unsigned int>(response[2]),
-                        " payload=", response.size() - protocol::header_size,
-                        " status=", response_status));
+        if (connection.server->logger_.packet_dump_enabled()) {
+            connection.server->logger_.packet(
+                LogLevel::debug, "TX Response", response,
+                concatenate("function=",
+                            std::to_integer<unsigned int>(response[2]),
+                            " payload=", response.size() - protocol::header_size,
+                            " status=", response_status));
+        }
 #if NRPC_HAS_TLS
         if (connection.tls) {
             try {
@@ -539,6 +631,10 @@ private:
             return;
         }
         connection.closing = true;
+        if (connection.active_work != nullptr) {
+            connection.active_work->canceled.store(true, std::memory_order_release);
+            uv_cancel(reinterpret_cast<uv_req_t*>(&connection.active_work->request));
+        }
         uv_read_stop(reinterpret_cast<uv_stream_t*>(&connection.tcp));
         if (connection.timer_initialized && !uv_is_closing(
                 reinterpret_cast<uv_handle_t*>(&connection.timer))) {
@@ -546,7 +642,7 @@ private:
             uv_close(reinterpret_cast<uv_handle_t*>(&connection.timer),
                      &Impl::on_timer_closed);
         }
-        connection.server->resources_.cleanup_client(connection.id);
+        queue_client_cleanup(*connection.server, connection.id);
         connection.server->logger_.log(
             LogLevel::info,
             concatenate("client ", connection.id, " disconnected"));
@@ -570,6 +666,32 @@ private:
         }
     }
 
+    static void queue_client_cleanup(Impl& server, ClientId client_id) {
+        auto* work = new (std::nothrow) CleanupWork{
+            .request = {},
+            .resources = &server.resources_,
+            .client_id = client_id,
+        };
+        if (work == nullptr) {
+            server.resources_.cleanup_client(client_id);
+            return;
+        }
+        work->request.data = work;
+        const int status = uv_queue_work(
+            &server.loop_, &work->request,
+            [](uv_work_t* request) {
+                auto* cleanup = static_cast<CleanupWork*>(request->data);
+                cleanup->resources->cleanup_client(cleanup->client_id);
+            },
+            [](uv_work_t* request, int) {
+                delete static_cast<CleanupWork*>(request->data);
+            });
+        if (status < 0) {
+            delete work;
+            server.resources_.cleanup_client(client_id);
+        }
+    }
+
     ServerConfig config_;
     Dispatcher& dispatcher_;
     ResourceManager& resources_;
@@ -583,6 +705,8 @@ private:
     std::uint16_t bound_port_{0};
     bool started_{false};
     bool stopped_{false};
+    std::size_t pending_work_count_{0};
+    std::size_t pending_work_bytes_{0};
 };
 
 Server::Server(ServerConfig config, Dispatcher& dispatcher, ResourceManager& resources,

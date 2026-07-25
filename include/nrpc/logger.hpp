@@ -28,6 +28,8 @@ public:
                 std::string_view fields);
     void rpc_timing(std::string_view fields,
                     std::chrono::microseconds duration);
+    [[nodiscard]] bool packet_dump_enabled() const noexcept;
+    [[nodiscard]] bool rpc_timing_enabled() const noexcept;
 
 private:
     std::vector<std::ostream*> outputs_;

@@ -174,8 +174,6 @@ void register_lcard_backend(Dispatcher& dispatcher,
                 static_cast<std::uint32_t>(read_unsigned(args[0].data)), *firmware);
             if (!device) return std::unexpected(device.error());
             const auto info = (*device)->info();
-            auto handle = store_device(context, std::move(*device));
-            if (!handle) return std::unexpected(handle.error());
 
             auto handle_mem = allocate(arena, 8, 8);
             auto type_mem = allocate(arena, 4, 4);
@@ -187,6 +185,8 @@ void register_lcard_backend(Dispatcher& dispatcher,
                 !dac_mem || !capabilities_mem)
                 return std::unexpected(BackendError{error_code::arena_exhausted,
                                                      "response arena exhausted"});
+            auto handle = store_device(context, std::move(*device));
+            if (!handle) return std::unexpected(handle.error());
             std::memcpy(name_mem->data(), info.board_name.data(), info.board_name.size());
             name_mem->back() = std::byte{0};
             (*revision_mem)[0] = static_cast<std::byte>(info.revision);

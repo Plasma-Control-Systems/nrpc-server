@@ -247,6 +247,8 @@ workers = 4
 backlog = 128
 max_payload_size = 16777216
 arena_size = 1048576
+max_pending_requests = 256
+max_pending_request_bytes = 268435456
 default_timeout_ms = 0
 
 [logging]
@@ -270,6 +272,8 @@ The `[server]` section controls the listener and request execution:
 | `backlog` | `128` | TCP listen backlog |
 | `max_payload_size` | `16777216` | Maximum nRPC request payload in bytes |
 | `arena_size` | `1048576` | Per-request response arena size in bytes |
+| `max_pending_requests` | `256` | Maximum number of queued and running requests |
+| `max_pending_request_bytes` | `268435456` | Maximum combined payload size of queued and running requests |
 | `default_timeout_ms` | `0` | Timeout used when a request has no timeout; `0` disables the default |
 
 The `[logging]` section controls log output:

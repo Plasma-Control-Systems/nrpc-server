@@ -35,14 +35,21 @@ public:
     }
 
     template <NrpcHandle T>
-    T* find(ClientId client_id, HandleId handle_id) {
-        std::scoped_lock lock(mutex_);
-        auto iterator = handles_.find(Key{client_id, handle_id});
-        if (iterator == handles_.end()) {
-            return nullptr;
+    std::shared_ptr<T> find(ClientId client_id, HandleId handle_id) {
+        std::shared_ptr<HolderBase> entry;
+        {
+            std::scoped_lock lock(mutex_);
+            auto iterator = handles_.find(Key{client_id, handle_id});
+            if (iterator == handles_.end()) {
+                return {};
+            }
+            entry = iterator->second;
         }
-        auto* holder = dynamic_cast<Holder<T>*>(iterator->second.get());
-        return holder == nullptr ? nullptr : holder->value.get();
+        auto* holder = dynamic_cast<Holder<T>*>(entry.get());
+        if (holder == nullptr || holder->value == nullptr) {
+            return {};
+        }
+        return std::shared_ptr<T>(std::move(entry), holder->value.get());
     }
 
     template <NrpcHandle T, typename Function>

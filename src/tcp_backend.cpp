@@ -188,17 +188,6 @@ std::expected<std::string, BackendError> parse_string(
                        variable.data.size() - 1U);
 }
 
-BackendResult scalar_u64(Arena& arena, std::uint64_t value) {
-    auto memory = arena.allocate(8, 8);
-    if (!memory) {
-        return std::unexpected(BackendError{
-            error_code::arena_exhausted, "response arena exhausted"});
-    }
-    write_u64(*memory, value);
-    return std::vector<protocol::VariableView>{
-        {protocol::DataType::uint64, 1, std::as_const(*memory)}};
-}
-
 BackendResult scalar_u32(Arena& arena, std::uint32_t value) {
     auto memory = arena.allocate(4, 4);
     if (!memory) {
@@ -387,6 +376,11 @@ void register_tcp_backend(Dispatcher& dispatcher) {
             if (!host) {
                 return std::unexpected(host.error());
             }
+            auto response = arena.allocate(8, 8);
+            if (!response) {
+                return std::unexpected(BackendError{
+                    error_code::arena_exhausted, "response arena exhausted"});
+            }
             const auto port = static_cast<std::uint16_t>(read_u32(
                 std::array{std::byte{0}, std::byte{0}, arguments[1].data[0],
                            arguments[1].data[1]}));
@@ -400,7 +394,9 @@ void register_tcp_backend(Dispatcher& dispatcher) {
                 return std::unexpected(
                     BackendError{tcp_error::connect_failed, "handle registration failed"});
             }
-            return scalar_u64(arena, handle_id);
+            write_u64(*response, handle_id);
+            return std::vector<protocol::VariableView>{
+                {protocol::DataType::uint64, 1, std::as_const(*response)}};
         });
 
     dispatcher.register_handler(

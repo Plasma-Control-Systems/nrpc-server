@@ -25,10 +25,13 @@ TEST(ResourceManager, FindsAndCleansClientHandles) {
     EXPECT_TRUE(manager.register_handle(10, 1, std::make_unique<MockHandle>(close_count)));
     EXPECT_TRUE(manager.register_handle(10, 2, std::make_unique<MockHandle>(close_count)));
     EXPECT_TRUE(manager.register_handle(11, 1, std::make_unique<MockHandle>(close_count)));
-    EXPECT_NE(manager.find<MockHandle>(10, 1), nullptr);
+    auto retained = manager.find<MockHandle>(10, 1);
+    ASSERT_NE(retained, nullptr);
     EXPECT_EQ(manager.size(), 3U);
 
     EXPECT_EQ(manager.cleanup_client(10), 2U);
+    EXPECT_EQ(close_count, 1);
+    retained.reset();
     EXPECT_EQ(close_count, 2);
     EXPECT_EQ(manager.size(), 1U);
 }

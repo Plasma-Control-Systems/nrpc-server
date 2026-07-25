@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -95,7 +96,7 @@ int main(int argc, char** argv) {
             return result;
         });
     dispatcher.register_handler(
-        1, [](const nrpc::RequestContext&,
+        1, [](const nrpc::RequestContext& context,
               std::span<const nrpc::protocol::Variable> arguments,
               nrpc::Arena&) -> nrpc::BackendResult {
             if (arguments.size() != 1 ||
@@ -110,7 +111,20 @@ int main(int argc, char** argv) {
                 (std::to_integer<std::uint32_t>(data[1]) << 16U) |
                 (std::to_integer<std::uint32_t>(data[2]) << 8U) |
                 std::to_integer<std::uint32_t>(data[3]);
-            std::this_thread::sleep_for(std::chrono::milliseconds(duration));
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(duration);
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (context.canceled()) {
+                    return std::unexpected(nrpc::BackendError{
+                        nrpc::error_code::timeout, "sleep request canceled"});
+                }
+                const auto remaining = deadline - std::chrono::steady_clock::now();
+                const auto cancellation_interval =
+                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(
+                    std::min(remaining, cancellation_interval));
+            }
             return std::vector<nrpc::protocol::VariableView>{};
         });
 

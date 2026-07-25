@@ -5,8 +5,11 @@
 namespace nrpc {
 
 ResourceManager::~ResourceManager() {
-    std::scoped_lock lock(mutex_);
-    handles_.clear();
+    decltype(handles_) removed;
+    {
+        std::scoped_lock lock(mutex_);
+        removed.swap(handles_);
+    }
 }
 
 std::size_t ResourceManager::KeyHash::operator()(const Key& key) const noexcept {

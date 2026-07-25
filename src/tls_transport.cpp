@@ -33,31 +33,41 @@ public:
         mbedtls_pk_init(&key);
         mbedtls_ssl_config_init(&config);
 
-        static constexpr char personalization[] = "nrpc-server";
-        int status = mbedtls_ctr_drbg_seed(
-            &random, mbedtls_entropy_func, &entropy,
-            reinterpret_cast<const unsigned char*>(personalization),
-            sizeof(personalization) - 1);
-        if (status != 0) throw_tls("mbedtls_ctr_drbg_seed", status);
-        status = mbedtls_x509_crt_parse_file(&certificate, certificate_path.c_str());
-        if (status != 0) throw_tls("loading TLS certificate", status);
+        try {
+            static constexpr char personalization[] = "nrpc-server";
+            int status = mbedtls_ctr_drbg_seed(
+                &random, mbedtls_entropy_func, &entropy,
+                reinterpret_cast<const unsigned char*>(personalization),
+                sizeof(personalization) - 1);
+            if (status != 0) throw_tls("mbedtls_ctr_drbg_seed", status);
+            status = mbedtls_x509_crt_parse_file(
+                &certificate, certificate_path.c_str());
+            if (status != 0) throw_tls("loading TLS certificate", status);
 #if MBEDTLS_VERSION_MAJOR >= 3
-        status = mbedtls_pk_parse_keyfile(&key, private_key_path.c_str(), nullptr,
-                                          mbedtls_ctr_drbg_random, &random);
+            status = mbedtls_pk_parse_keyfile(
+                &key, private_key_path.c_str(), nullptr,
+                mbedtls_ctr_drbg_random, &random);
 #else
-        status = mbedtls_pk_parse_keyfile(&key, private_key_path.c_str(), nullptr);
+            status = mbedtls_pk_parse_keyfile(
+                &key, private_key_path.c_str(), nullptr);
 #endif
-        if (status != 0) throw_tls("loading TLS private key", status);
-        status = mbedtls_ssl_config_defaults(
-            &config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
-            MBEDTLS_SSL_PRESET_DEFAULT);
-        if (status != 0) throw_tls("mbedtls_ssl_config_defaults", status);
-        mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random);
-        status = mbedtls_ssl_conf_own_cert(&config, &certificate, &key);
-        if (status != 0) throw_tls("mbedtls_ssl_conf_own_cert", status);
+            if (status != 0) throw_tls("loading TLS private key", status);
+            status = mbedtls_ssl_config_defaults(
+                &config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
+                MBEDTLS_SSL_PRESET_DEFAULT);
+            if (status != 0) throw_tls("mbedtls_ssl_config_defaults", status);
+            mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random);
+            status = mbedtls_ssl_conf_own_cert(&config, &certificate, &key);
+            if (status != 0) throw_tls("mbedtls_ssl_conf_own_cert", status);
+        } catch (...) {
+            cleanup();
+            throw;
+        }
     }
 
-    ~Impl() {
+    ~Impl() { cleanup(); }
+
+    void cleanup() noexcept {
         mbedtls_ssl_config_free(&config);
         mbedtls_pk_free(&key);
         mbedtls_x509_crt_free(&certificate);
@@ -77,7 +87,10 @@ public:
     explicit Impl(mbedtls_ssl_config& config) {
         mbedtls_ssl_init(&ssl);
         const int status = mbedtls_ssl_setup(&ssl, &config);
-        if (status != 0) throw_tls("mbedtls_ssl_setup", status);
+        if (status != 0) {
+            mbedtls_ssl_free(&ssl);
+            throw_tls("mbedtls_ssl_setup", status);
+        }
         mbedtls_ssl_set_bio(&ssl, this, &Impl::send, &Impl::receive, nullptr);
     }
 

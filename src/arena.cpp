@@ -5,12 +5,18 @@
 
 namespace nrpc {
 
-Arena::Arena(std::size_t capacity) : storage_(capacity) {}
+Arena::Arena(std::size_t capacity) : capacity_(capacity) {}
 
 std::expected<std::span<std::byte>, ArenaError> Arena::allocate(
     std::size_t size, std::size_t alignment) {
     if (!std::has_single_bit(alignment)) {
         return std::unexpected(ArenaError::invalid_alignment);
+    }
+    if (size > capacity_ - offset_) {
+        return std::unexpected(ArenaError::out_of_memory);
+    }
+    if (storage_.empty() && capacity_ != 0) {
+        storage_.resize(capacity_);
     }
     const auto base = reinterpret_cast<std::uintptr_t>(storage_.data());
     const auto current = base + offset_;
@@ -27,7 +33,7 @@ std::expected<std::span<std::byte>, ArenaError> Arena::allocate(
 
 void Arena::reset() noexcept { offset_ = 0; }
 
-std::size_t Arena::capacity() const noexcept { return storage_.size(); }
+std::size_t Arena::capacity() const noexcept { return capacity_; }
 
 std::size_t Arena::used() const noexcept { return offset_; }
 

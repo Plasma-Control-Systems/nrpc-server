@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -23,6 +24,12 @@ struct RequestContext {
     ClientId client_id;
     std::uint32_t timeout_ms;
     ResourceManager& resources;
+    const std::atomic_bool* cancellation{nullptr};
+
+    [[nodiscard]] bool canceled() const noexcept {
+        return cancellation != nullptr &&
+               cancellation->load(std::memory_order_acquire);
+    }
 };
 
 using BackendResult = std::expected<std::vector<protocol::VariableView>, BackendError>;

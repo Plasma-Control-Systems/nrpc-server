@@ -127,6 +127,20 @@ void apply_config_value(ApplicationConfig& config, std::string section,
                 parse_integer<std::uint32_t>(value, key);
         } else if (key == "arena_size") {
             config.server.arena_size = parse_integer<std::size_t>(value, key);
+        } else if (key == "max_pending_requests") {
+            config.server.max_pending_requests =
+                parse_integer<std::size_t>(value, key);
+            if (config.server.max_pending_requests == 0) {
+                throw std::runtime_error(
+                    "max_pending_requests must be greater than zero");
+            }
+        } else if (key == "max_pending_request_bytes") {
+            config.server.max_pending_request_bytes =
+                parse_integer<std::size_t>(value, key);
+            if (config.server.max_pending_request_bytes == 0) {
+                throw std::runtime_error(
+                    "max_pending_request_bytes must be greater than zero");
+            }
         } else if (key == "default_timeout_ms" ||
                    key == "request_timeout_ms" || key == "timeout_ms") {
             config.server.default_timeout_ms =

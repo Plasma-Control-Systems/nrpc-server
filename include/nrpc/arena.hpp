@@ -21,6 +21,7 @@ public:
     [[nodiscard]] std::size_t used() const noexcept;
 
 private:
+    std::size_t capacity_;
     std::vector<std::byte> storage_;
     std::size_t offset_{0};
 };

@@ -47,6 +47,8 @@ TEST(ApplicationConfigTest, LoadsIniAndAllowsLaterArgumentsToOverrideIt) {
                   "port = 9001\n"
                   "workers = 3\n"
                   "backlog = 64\n"
+                  "max_pending_requests = 12\n"
+                  "max_pending_request_bytes = 8388608\n"
                   "[logging]\n"
                   "file = from-ini.log\n"
                   "packet_dump = yes\n"
@@ -65,6 +67,8 @@ TEST(ApplicationConfigTest, LoadsIniAndAllowsLaterArgumentsToOverrideIt) {
     EXPECT_EQ(result.config.server.host, "127.0.0.1");
     EXPECT_EQ(result.config.server.port, 9100);
     EXPECT_EQ(result.config.server.backlog, 64);
+    EXPECT_EQ(result.config.server.max_pending_requests, 12U);
+    EXPECT_EQ(result.config.server.max_pending_request_bytes, 8388608U);
     ASSERT_TRUE(result.config.worker_count);
     EXPECT_EQ(*result.config.worker_count, 3U);
     EXPECT_EQ(result.config.log_path, "from-ini.log");
@@ -142,6 +146,23 @@ TEST(ApplicationConfigTest, RejectsInvalidWorkerCount) {
     constexpr std::array arguments{std::string_view{"--workers"},
                                    std::string_view{"0"}};
     EXPECT_THROW(nrpc::parse_application_config(arguments), std::runtime_error);
+}
+
+TEST(ApplicationConfigTest, RejectsZeroPendingRequestLimits) {
+    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("nrpc-config-limits-" + std::to_string(suffix) + ".ini");
+    {
+        std::ofstream output(path);
+        ASSERT_TRUE(output);
+        output << "[server]\nmax_pending_requests = 0\n";
+    }
+    const std::string path_text = path.string();
+    const std::array config_arguments{
+        std::string_view{"--config"}, std::string_view{path_text}};
+    EXPECT_THROW(nrpc::parse_application_config(config_arguments),
+                 std::runtime_error);
+    std::filesystem::remove(path);
 }
 
 TEST(ApplicationConfigTest, ReportsHelpWithoutRequiringConfiguration) {

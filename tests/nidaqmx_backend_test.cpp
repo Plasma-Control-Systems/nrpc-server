@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "nrpc/nidaqmx_backend.hpp"
+#include "nrpc/error_codes.hpp"
 
 namespace {
 
@@ -148,4 +149,26 @@ TEST(NidaqmxBackend, CreatesDigitalOutputAndWritesValues) {
     auto written = dispatcher.dispatch(nrpc::nidaqmx_function::write_digital, context, write_args, arena);
     ASSERT_TRUE(written); EXPECT_EQ(decode(written->front().data), 2U);
     EXPECT_EQ(driver->last_task->digital, (std::vector<std::uint32_t>{1, 0}));
+}
+
+TEST(NidaqmxBackend, DoesNotCreateTaskWhenResponseArenaIsExhausted) {
+    auto driver = std::make_shared<FakeDriver>();
+    nrpc::Dispatcher dispatcher;
+    nrpc::register_nidaqmx_backend(dispatcher, driver);
+    nrpc::ResourceManager resources;
+    nrpc::Arena arena(0);
+    const nrpc::RequestContext context{9, 1000, resources};
+    const std::vector args{
+        variable(nrpc::protocol::DataType::string, 18,
+                 text("Dev1/port0/line0")),
+        variable(nrpc::protocol::DataType::boolean, 1, {std::byte{1}}),
+    };
+
+    const auto opened = dispatcher.dispatch(
+        nrpc::nidaqmx_function::create_do, context, args, arena);
+
+    ASSERT_FALSE(opened);
+    EXPECT_EQ(opened.error().code, nrpc::error_code::arena_exhausted);
+    EXPECT_EQ(driver->last_task, nullptr);
+    EXPECT_EQ(resources.size(), 0U);
 }

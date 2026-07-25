@@ -75,17 +75,6 @@ std::expected<SerialFlowControl, BackendError> parse_flow(std::uint8_t value) {
     return static_cast<SerialFlowControl>(value);
 }
 
-BackendResult scalar_u64(Arena& arena, std::uint64_t value) {
-    auto memory = arena.allocate(8, 8);
-    if (!memory) {
-        return std::unexpected(BackendError{
-            error_code::arena_exhausted, "response arena exhausted"});
-    }
-    write_u64(*memory, value);
-    return std::vector<protocol::VariableView>{
-        {protocol::DataType::uint64, 1, std::as_const(*memory)}};
-}
-
 BackendResult scalar_u32(Arena& arena, std::uint32_t value) {
     auto memory = arena.allocate(4, 4);
     if (!memory) {
@@ -147,6 +136,11 @@ void register_serial_backend(Dispatcher& dispatcher) {
                     serial_error::invalid_arguments,
                     "invalid serial configuration"});
             }
+            auto response = arena.allocate(8, 8);
+            if (!response) {
+                return std::unexpected(BackendError{
+                    error_code::arena_exhausted, "response arena exhausted"});
+            }
             auto port = SerialPort::open(*name, config);
             if (!port) {
                 return std::unexpected(port.error());
@@ -158,7 +152,9 @@ void register_serial_backend(Dispatcher& dispatcher) {
                     serial_error::open_failed,
                     "serial handle registration failed"});
             }
-            return scalar_u64(arena, handle_id);
+            write_u64(*response, handle_id);
+            return std::vector<protocol::VariableView>{
+                {protocol::DataType::uint64, 1, std::as_const(*response)}};
         });
 
     dispatcher.register_handler(

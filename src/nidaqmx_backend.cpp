@@ -350,12 +350,6 @@ std::expected<std::uint64_t, BackendError> store_task(
         return std::unexpected(BackendError{nidaqmx_error::task_creation_failed, "task handle registration failed"});
     return id;
 }
-BackendResult handle_result(Arena& arena, std::uint64_t handle) {
-    auto memory = arena.allocate(8, 8);
-    if (!memory) return std::unexpected(BackendError{error_code::arena_exhausted, "response arena exhausted"});
-    write_u64(*memory, handle);
-    return std::vector<protocol::VariableView>{{protocol::DataType::uint64, 1, std::as_const(*memory)}};
-}
 double timeout_seconds(const RequestContext& context) {
     return static_cast<double>(context.timeout_ms) / 1000.0;
 }
@@ -399,11 +393,16 @@ void register_nidaqmx_backend(Dispatcher& dispatcher,
             [driver, create](const RequestContext& context,
                              std::span<const protocol::Variable> args,
                              Arena& arena) -> BackendResult {
+                auto memory = arena.allocate(8, 8);
+                if (!memory) return std::unexpected(BackendError{
+                    error_code::arena_exhausted, "response arena exhausted"});
                 auto task = create(*driver, args);
                 if (!task) return std::unexpected(task.error());
                 auto handle = store_task(context, std::move(*task));
                 if (!handle) return std::unexpected(handle.error());
-                return handle_result(arena, *handle);
+                write_u64(*memory, *handle);
+                return std::vector<protocol::VariableView>{{
+                    protocol::DataType::uint64, 1, std::as_const(*memory)}};
             });
     };
     register_created(nidaqmx_function::create_ai_voltage,
@@ -478,6 +477,7 @@ void register_nidaqmx_backend(Dispatcher& dispatcher,
             if (a.size() != 2 || !scalar(a[0], protocol::DataType::uint64, 8) || !scalar(a[1], protocol::DataType::uint32, 4))
                 return std::unexpected(BackendError{nidaqmx_error::invalid_arguments, "analog read expects handle and sample count"});
             const auto count = read_u32(a[1].data); if (count == 0 || count > max_samples_per_call) return std::unexpected(BackendError{nidaqmx_error::invalid_arguments, "sample count is out of range"});
+            if (static_cast<std::size_t>(count) * 8U > arena.capacity() - arena.used()) return std::unexpected(BackendError{error_code::arena_exhausted, "response arena exhausted"});
             std::vector<double> values(count); auto result = c.resources.with_handle<NidaqmxTask>(c.client_id, read_u64(a[0].data), [&](NidaqmxTask& t) { return t.read_analog(values, count, timeout_seconds(c)); });
             if (!result) return std::unexpected(BackendError{nidaqmx_error::invalid_handle, "unknown NI-DAQmx task handle"}); if (!*result) return std::unexpected(result->error());
             values.resize(std::min(values.size(), result->value())); auto memory = arena.allocate(values.size() * 8U, 8); if (!memory) return std::unexpected(BackendError{error_code::arena_exhausted, "response arena exhausted"});
@@ -487,7 +487,9 @@ void register_nidaqmx_backend(Dispatcher& dispatcher,
     dispatcher.register_handler(nidaqmx_function::read_digital,
         [](const RequestContext& c, std::span<const protocol::Variable> a, Arena& arena) -> BackendResult {
             if (a.size() != 2 || !scalar(a[0], protocol::DataType::uint64, 8) || !scalar(a[1], protocol::DataType::uint32, 4)) return std::unexpected(BackendError{nidaqmx_error::invalid_arguments, "digital read expects handle and sample count"});
-            const auto count = read_u32(a[1].data); if (count == 0 || count > max_samples_per_call) return std::unexpected(BackendError{nidaqmx_error::invalid_arguments, "sample count is out of range"}); std::vector<std::uint32_t> values(count);
+            const auto count = read_u32(a[1].data); if (count == 0 || count > max_samples_per_call) return std::unexpected(BackendError{nidaqmx_error::invalid_arguments, "sample count is out of range"});
+            if (static_cast<std::size_t>(count) * 4U > arena.capacity() - arena.used()) return std::unexpected(BackendError{error_code::arena_exhausted, "response arena exhausted"});
+            std::vector<std::uint32_t> values(count);
             auto result = c.resources.with_handle<NidaqmxTask>(c.client_id, read_u64(a[0].data), [&](NidaqmxTask& t) { return t.read_digital(values, count, timeout_seconds(c)); });
             if (!result) return std::unexpected(BackendError{nidaqmx_error::invalid_handle, "unknown NI-DAQmx task handle"}); if (!*result) return std::unexpected(result->error()); values.resize(std::min(values.size(), result->value()));
             auto memory = arena.allocate(values.size() * 4U, 4); if (!memory) return std::unexpected(BackendError{error_code::arena_exhausted, "response arena exhausted"}); for (std::size_t i = 0; i < values.size(); ++i) write_u64(memory->subspan(i * 4U, 4), values[i]);
