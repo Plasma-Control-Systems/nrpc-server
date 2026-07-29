@@ -19,6 +19,7 @@ inline constexpr std::uint8_t read_adc_frame = 82;
 inline constexpr std::uint8_t write_dac = 83;
 inline constexpr std::uint8_t write_dac_frames = 84;
 inline constexpr std::uint8_t close = 85;
+inline constexpr std::uint8_t read_adc_samples = 86;
 }  // namespace lcard_function
 
 namespace lcard_error {
@@ -36,6 +37,7 @@ inline constexpr std::uint32_t read_adc = 1U << 0U;
 inline constexpr std::uint32_t read_adc_frame = 1U << 1U;
 inline constexpr std::uint32_t write_dac = 1U << 2U;
 inline constexpr std::uint32_t write_dac_frames = 1U << 3U;
+inline constexpr std::uint32_t read_adc_samples = 1U << 4U;
 }  // namespace lcard_capability
 
 enum class LcardAdcInputMode : std::uint8_t {

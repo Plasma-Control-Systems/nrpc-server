@@ -746,7 +746,8 @@ public:
         }
         }
         info.capabilities = lcard_capability::read_adc |
-                            lcard_capability::read_adc_frame;
+                            lcard_capability::read_adc_frame |
+                            lcard_capability::read_adc_samples;
         if (info.dac_present) info.capabilities |= lcard_capability::write_dac;
         const bool e140_stream = slot.board_type == board_e140 &&
             info.revision != static_cast<U8>('A') &&
