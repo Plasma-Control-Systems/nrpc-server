@@ -413,9 +413,11 @@ sampling and explicit clock configuration are outside its scope.
 The LCard backend owns one WLCOMP interface handle per nRPC handle and uses the
 vendor's C ABI for lifecycle, asynchronous I/O, streams, and buffer access.
 Devices and mapped ADC/DAC streams are stopped and
-released on explicit close, client disconnect, or server shutdown. Values are
-raw hardware codes; conversion to volts is intentionally left to application
-code and the board's metrology data.
+released on explicit close, client disconnect, or server shutdown. Internal
+ADC correction is enabled at open for boards whose LComp implementation
+supports it (L-761/L-780/L-783, E14-440, and E20-10M). Values remain raw
+hardware codes; conversion to volts is intentionally left to application code
+and the selected input range.
 
 `register_lcard_backend(dispatcher)` installs this function table:
 

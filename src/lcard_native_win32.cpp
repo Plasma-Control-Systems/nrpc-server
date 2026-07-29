@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include "nrpc/lcard_backend.hpp"
+#include "lcard_native.hpp"
 
 #include <algorithm>
 #include <array>
@@ -128,6 +129,7 @@ struct Functions {
     U32(__cdecl* load_bios)(VendorHandle*, char*);
     U32(__cdecl* plata_test)(VendorHandle*);
     U32(__cdecl* read_descriptor)(VendorHandle*, void*);
+    U32(__cdecl* enable_correction)(VendorHandle*, U16);
     U32(__cdecl* io_async)(VendorHandle*, AsyncParameters*);
     U32(__cdecl* request_stream)(VendorHandle*, U32*, U32);
     U32(__cdecl* fill_parameters)(VendorHandle*, void*, U32);
@@ -195,6 +197,7 @@ std::expected<std::shared_ptr<Library>, BackendError> load_library() {
         load_symbol(module, "LoadBios", f.load_bios) &&
         load_symbol(module, "PlataTest", f.plata_test) &&
         load_symbol(module, "ReadPlataDescr", f.read_descriptor) &&
+        load_symbol(module, "EnableCorrection", f.enable_correction) &&
         load_symbol(module, "IoAsync", f.io_async) &&
         load_symbol(module, "RequestBufferStream", f.request_stream) &&
         load_symbol(module, "FillDAQparameters", f.fill_parameters) &&
@@ -496,6 +499,7 @@ private:
         if (is_adc1(slot_.board_type)) {
             AdcParameters1 parameters{};
             parameters.type = adc_parameter;
+            parameters.auto_init = 1;
             parameters.rate_khz = rate;
             parameters.frame_period_ms = 0;
             parameters.fifo = slot_.board_type == board_l791 ? 128U : 0U;
@@ -524,10 +528,12 @@ private:
         } else {
             AdcParameters0 parameters{};
             parameters.type = adc_parameter;
+            parameters.auto_init = 1;
             parameters.rate_khz = rate;
             parameters.frame_period_ms = 0;
             parameters.fifo = (slot_.board_type == board_e140 || slot_.board_type == board_e154) ? 0U : 1024U;
-            parameters.irq_step = 4096;
+            parameters.irq_step = std::min<U32>(
+                4096U, std::max<U32>(32U, (sample_count + 31U) & ~31U));
             parameters.pages = std::max<U32>(
                 2U, (sample_count + parameters.irq_step - 1U) /
                          parameters.irq_step);
@@ -691,6 +697,12 @@ public:
         status = f.read_descriptor(&device, descriptor.data());
         if (status != l_success)
             return fail(vendor_error("ReadPlataDescr", status, lcard_error::open_failed));
+        if (detail::lcard_supports_internal_correction(slot.board_type)) {
+            status = f.enable_correction(&device, 1U);
+            if (status != l_success)
+                return fail(vendor_error("EnableCorrection", status,
+                                         lcard_error::open_failed));
+        }
 
         LcardDeviceInfo info{};
         info.board_type = slot.board_type;

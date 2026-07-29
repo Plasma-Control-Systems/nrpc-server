@@ -6,6 +6,9 @@
 #include <vector>
 
 #include "nrpc/lcard_backend.hpp"
+#ifdef _WIN32
+#include "lcard_native.hpp"
+#endif
 
 namespace {
 
@@ -115,6 +118,16 @@ std::vector<nrpc::protocol::Variable> channel_arrays(
 }
 
 }  // namespace
+
+#ifdef _WIN32
+TEST(LcardBackend, IdentifiesBoardsWithInternalCorrection) {
+    for (const auto board_type : {5U, 6U, 14U, 30U, 39U})
+        EXPECT_TRUE(nrpc::detail::lcard_supports_internal_correction(board_type));
+
+    for (const auto board_type : {19U, 31U, 32U, 38U})
+        EXPECT_FALSE(nrpc::detail::lcard_supports_internal_correction(board_type));
+}
+#endif
 
 TEST(LcardBackend, OpensReportsMetadataReadsFrameAndCloses) {
     auto driver = std::make_shared<FakeDriver>();
