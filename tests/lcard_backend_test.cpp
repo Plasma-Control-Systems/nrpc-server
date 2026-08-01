@@ -6,6 +6,9 @@
 #include <vector>
 
 #include "nrpc/lcard_backend.hpp"
+#ifdef _WIN32
+#include "lcard_native.hpp"
+#endif
 
 namespace {
 
@@ -69,7 +72,7 @@ public:
     }
     void close() noexcept override { closed = true; }
 
-    nrpc::LcardDeviceInfo info_{19, "L791", 'C', true, 15};
+    nrpc::LcardDeviceInfo info_{19, "L791", 'C', true, 31};
     std::vector<nrpc::LcardAdcChannel> last_channels;
     std::vector<std::uint16_t> dac0, dac1;
     double last_rate{}, last_timeout{};
@@ -116,6 +119,16 @@ std::vector<nrpc::protocol::Variable> channel_arrays(
 
 }  // namespace
 
+#ifdef _WIN32
+TEST(LcardBackend, IdentifiesBoardsWithInternalCorrection) {
+    for (const auto board_type : {5U, 6U, 14U, 30U, 39U})
+        EXPECT_TRUE(nrpc::detail::lcard_supports_internal_correction(board_type));
+
+    for (const auto board_type : {19U, 31U, 32U, 38U})
+        EXPECT_FALSE(nrpc::detail::lcard_supports_internal_correction(board_type));
+}
+#endif
+
 TEST(LcardBackend, OpensReportsMetadataReadsFrameAndCloses) {
     auto driver = std::make_shared<FakeDriver>();
     nrpc::Dispatcher dispatcher; nrpc::register_lcard_backend(dispatcher, driver);
@@ -147,6 +160,23 @@ TEST(LcardBackend, OpensReportsMetadataReadsFrameAndCloses) {
     EXPECT_EQ(driver->last->last_sample_count, 8U);
     EXPECT_DOUBLE_EQ(driver->last->last_timeout, 2.5);
     EXPECT_DOUBLE_EQ(driver->last->last_rate, 100.0);
+
+    arena.reset();
+    std::vector samples_args{
+        variable(nrpc::protocol::DataType::uint64, 1, integer(handle, 8))};
+    auto sample_channels = channel_arrays({0, 1});
+    samples_args.insert(samples_args.end(), sample_channels.begin(),
+                        sample_channels.end());
+    samples_args.push_back(variable(nrpc::protocol::DataType::uint32, 1,
+                                    integer(5, 4)));
+    samples_args.push_back(variable(nrpc::protocol::DataType::float64, 1,
+                                    floating(20.0)));
+    auto samples = dispatcher.dispatch(nrpc::lcard_function::read_adc_samples,
+                                       context, samples_args, arena);
+    ASSERT_TRUE(samples); ASSERT_EQ(samples->size(), 2U);
+    EXPECT_EQ(samples->front().element_count, 10U);
+    EXPECT_EQ(driver->last->last_sample_count, 10U);
+    EXPECT_DOUBLE_EQ(driver->last->last_rate, 20.0);
 
     auto incomplete_args = frame_args;
     incomplete_args.back() = variable(nrpc::protocol::DataType::uint32, 1,

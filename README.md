@@ -331,7 +331,7 @@ The sample executable registers two mock functions:
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
 - `64` through `74`: Windows NI-DAQmx backend
-- `80` through `85`: Windows LCard/LComp backend
+- `80` through `86`: Windows LCard/LComp backend
 
 The sleep backend exists to exercise worker isolation and timeout handling.
 
@@ -417,9 +417,11 @@ sampling and explicit clock configuration are outside its scope.
 The LCard backend owns one WLCOMP interface handle per nRPC handle and uses the
 vendor's C ABI for lifecycle, asynchronous I/O, streams, and buffer access.
 Devices and mapped ADC/DAC streams are stopped and
-released on explicit close, client disconnect, or server shutdown. Values are
-raw hardware codes; conversion to volts is intentionally left to application
-code and the board's metrology data.
+released on explicit close, client disconnect, or server shutdown. Internal
+ADC correction is enabled at open for boards whose LComp implementation
+supports it (L-761/L-780/L-783, E14-440, and E20-10M). Values remain raw
+hardware codes; conversion to volts is intentionally left to application code
+and the selected input range.
 
 `register_lcard_backend(dispatcher)` installs this function table:
 
@@ -431,6 +433,7 @@ code and the board's metrology data.
 | 83 | Write one DAC code | handle, `uint8 channel`, `uint16 code` | no variables |
 | 84 | Write finite DAC frames | handle, two `uint16[]` arrays, frame rate | frame count, actual rate |
 | 85 | Close | `uint64 handle` | no variables |
+| 86 | Read an exact ADC sample count | handle, channel descriptor arrays, `uint32 samples_per_channel`, `float64 rate_khz` | interleaved `int16[] codes`, actual rate |
 
 Normalized ADC descriptors contain a physical channel, positive full-scale
 range, and input mode. Advanced callers can pass a complete vendor logical
@@ -446,6 +449,13 @@ then the next time row. New clients request up to 131,072 samples; when that
 capacity is not divisible by the channel count, they request the largest
 smaller number containing only complete scans. The legacy request without an
 explicit sample count still returns one scan.
+
+Function 86 accepts the requested number of samples for each selected channel.
+It computes the total stream size, lets the LComp adapter normalize FIFO,
+interrupt-step, page-count, and other board-specific parameters, and performs
+one continuous acquisition even when the result spans multiple channel scans.
+The requested and returned rates are aggregate ADC point rates in kHz. The
+configured response arena limits the largest result that can be returned.
 
 Timed DAC frames contain simultaneous DAC0/DAC1 codes. L-7xx and E14 streams
 are interleaved, while L-791 frames are packed into one 32-bit point. Timed

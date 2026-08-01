@@ -351,6 +351,60 @@ void register_lcard_backend(Dispatcher& dispatcher,
                                                      "unknown LCard device handle"});
             return std::vector<protocol::VariableView>{};
         });
+
+    dispatcher.register_handler(lcard_function::read_adc_samples,
+        [](const RequestContext& context,
+           std::span<const protocol::Variable> args,
+           Arena& arena) -> BackendResult {
+            if (args.size() != 7U ||
+                !scalar(args[0], protocol::DataType::uint64, 8) ||
+                !scalar(args[5], protocol::DataType::uint32, 4) ||
+                !scalar(args[6], protocol::DataType::float64, 8))
+                return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                    "LCard ADC samples expect handle, channel arrays, samples per channel, and rate"});
+            auto channels = channel_arguments(args, 1);
+            if (!channels) return std::unexpected(channels.error());
+            const auto samples_per_channel =
+                static_cast<std::uint32_t>(read_unsigned(args[5].data));
+            const auto rate = read_double(args[6].data);
+            if (samples_per_channel == 0U || !std::isfinite(rate) || rate <= 0.0)
+                return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                    "samples per channel and ADC rate must be positive"});
+            const auto total64 = static_cast<std::uint64_t>(samples_per_channel) *
+                                 channels->size();
+            if (total64 > std::numeric_limits<std::uint32_t>::max())
+                return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                    "requested ADC sample count is too large"});
+            const auto sample_count = static_cast<std::uint32_t>(total64);
+
+            // Reserve the complete RPC response before starting the hardware. This
+            // makes the configured response arena the only transport-size limit and
+            // avoids completing an acquisition that cannot be returned to the caller.
+            auto codes = allocate(arena, static_cast<std::size_t>(sample_count) * 2U, 2);
+            auto actual = allocate(arena, 8, 8);
+            if (!codes || !actual)
+                return std::unexpected(BackendError{error_code::arena_exhausted,
+                                                     "response arena exhausted"});
+            auto result = with_device(context, read_unsigned(args[0].data),
+                [&](LcardDevice& device) {
+                    return device.read_adc_frame(*channels, sample_count, rate,
+                                                 timeout_seconds(context));
+                });
+            if (!result) return std::unexpected(BackendError{lcard_error::invalid_handle,
+                                                              "unknown LCard device handle"});
+            if (!*result) return std::unexpected(result->error());
+            if (result->value().codes.size() != sample_count)
+                return std::unexpected(BackendError{lcard_error::operation_failed,
+                    "LCard returned an unexpected ADC sample count"});
+            for (std::size_t i = 0; i < result->value().codes.size(); ++i)
+                write_unsigned(codes->subspan(i * 2U, 2),
+                    std::bit_cast<std::uint16_t>(result->value().codes[i]));
+            write_unsigned(*actual,
+                std::bit_cast<std::uint64_t>(result->value().actual_rate_khz));
+            return std::vector<protocol::VariableView>{
+                {protocol::DataType::int16, sample_count, std::as_const(*codes)},
+                {protocol::DataType::float64, 1, std::as_const(*actual)}};
+        });
 }
 
 }  // namespace nrpc
