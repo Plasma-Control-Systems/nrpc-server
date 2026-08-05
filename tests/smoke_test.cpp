@@ -3,5 +3,5 @@
 #include "nrpc/version.hpp"
 
 TEST(Project, HasExpectedVersion) {
-    EXPECT_EQ(nrpc::version, "0.1.0");
+    EXPECT_EQ(nrpc::version, "1.0.0");
 }

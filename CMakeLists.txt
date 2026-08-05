@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(nrpc VERSION 0.1.0 LANGUAGES CXX)
+project(nrpc VERSION 1.0.0 LANGUAGES CXX)
 
 if(WIN32)
     set(NRPC_DEFAULT_PLATFORM windows)
