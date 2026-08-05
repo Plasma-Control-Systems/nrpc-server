@@ -406,7 +406,7 @@ and the selected input range.
 | 83 | Write one DAC code | handle, `uint8 channel`, `uint16 code` | no variables |
 | 84 | Write finite DAC frames | handle, two `uint16[]` arrays, frame rate | frame count, actual rate |
 | 85 | Close | `uint64 handle` | no variables |
-| 86 | Read an exact ADC sample count | handle, channel descriptor arrays, `uint32 samples_per_channel`, `float64 rate_khz` | interleaved `int16[] codes`, actual rate |
+| 86 | Read an exact ADC sample count | handle, channel descriptor arrays, `uint32 samples_per_channel`, `float64 rate_khz`, optional hardware-trigger descriptor | interleaved `int16[] codes`, actual rate |
 
 Normalized ADC descriptors contain a physical channel, positive full-scale
 range, and input mode. Advanced callers can pass a complete vendor logical
@@ -429,6 +429,14 @@ interrupt-step, page-count, and other board-specific parameters, and performs
 one continuous acquisition even when the result spans multiple channel scans.
 The requested and returned rates are aggregate ADC point rates in kHz. The
 configured response arena limits the largest result that can be returned.
+
+The optional function 86 trigger descriptor selects disabled, external
+rising/falling, or analog rising/falling/above/below start. Analog settings
+include a channel descriptor and normalized signed ADC threshold. E14-440 and
+E14-140 support their fixed-edge external start and all analog modes. E20-10
+supports external edges; the extended analog modes are available on E20-10B.
+Unsupported board/mode combinations return error 6005. Triggered acquisition
+waits in hardware and is bounded by the normal RPC timeout.
 
 Timed DAC frames contain simultaneous DAC0/DAC1 codes. L-7xx and E14 streams
 are interleaved, while L-791 frames are packed into one 32-bit point. Timed

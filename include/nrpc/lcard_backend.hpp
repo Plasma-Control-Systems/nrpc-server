@@ -38,6 +38,7 @@ inline constexpr std::uint32_t read_adc_frame = 1U << 1U;
 inline constexpr std::uint32_t write_dac = 1U << 2U;
 inline constexpr std::uint32_t write_dac_frames = 1U << 3U;
 inline constexpr std::uint32_t read_adc_samples = 1U << 4U;
+inline constexpr std::uint32_t hardware_trigger = 1U << 5U;
 }  // namespace lcard_capability
 
 enum class LcardAdcInputMode : std::uint8_t {
@@ -51,6 +52,22 @@ struct LcardAdcChannel {
     std::uint32_t channel{};  // Physical channel or complete vendor logical code.
     double range{};           // Positive full-scale voltage; ignored for raw.
     LcardAdcInputMode mode{LcardAdcInputMode::differential};
+};
+
+enum class LcardAdcTriggerMode : std::uint8_t {
+    disabled = 0,
+    external_rising = 1,
+    external_falling = 2,
+    analog_rising = 3,
+    analog_falling = 4,
+    analog_above = 5,
+    analog_below = 6,
+};
+
+struct LcardAdcTrigger {
+    LcardAdcTriggerMode mode{LcardAdcTriggerMode::disabled};
+    LcardAdcChannel channel{};
+    std::int16_t threshold{};
 };
 
 struct LcardDeviceInfo {
@@ -83,7 +100,8 @@ public:
         const LcardAdcChannel& channel, double timeout_seconds) = 0;
     virtual std::expected<LcardAdcFrame, BackendError> read_adc_frame(
         std::span<const LcardAdcChannel> channels, std::uint32_t sample_count,
-        double rate_khz, double timeout_seconds) = 0;
+        double rate_khz, const LcardAdcTrigger& trigger,
+        double timeout_seconds) = 0;
     virtual std::expected<void, BackendError> write_dac(
         std::uint8_t channel, std::uint16_t code, double timeout_seconds) = 0;
     virtual std::expected<LcardDacWriteResult, BackendError> write_dac_frames(

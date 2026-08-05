@@ -49,10 +49,12 @@ public:
     }
     std::expected<nrpc::LcardAdcFrame, nrpc::BackendError> read_adc_frame(
         std::span<const nrpc::LcardAdcChannel> channels,
-        std::uint32_t sample_count, double rate, double timeout) override {
+        std::uint32_t sample_count, double rate,
+        const nrpc::LcardAdcTrigger& trigger, double timeout) override {
         last_channels.assign(channels.begin(), channels.end());
         last_sample_count = sample_count;
         last_rate = rate; last_timeout = timeout;
+        last_trigger = trigger;
         std::vector<std::int16_t> codes(sample_count);
         for (std::size_t i = 0; i < codes.size(); ++i)
             codes[i] = static_cast<std::int16_t>(i);
@@ -77,6 +79,7 @@ public:
     std::vector<std::uint16_t> dac0, dac1;
     double last_rate{}, last_timeout{};
     std::uint32_t last_sample_count{};
+    nrpc::LcardAdcTrigger last_trigger{};
     std::uint8_t dac_channel{};
     std::uint16_t dac_code{};
     bool closed{};
@@ -177,6 +180,24 @@ TEST(LcardBackend, OpensReportsMetadataReadsFrameAndCloses) {
     EXPECT_EQ(samples->front().element_count, 10U);
     EXPECT_EQ(driver->last->last_sample_count, 10U);
     EXPECT_DOUBLE_EQ(driver->last->last_rate, 20.0);
+
+    arena.reset();
+    samples_args.push_back(variable(nrpc::protocol::DataType::uint8, 1,
+                                    integer(4, 1)));
+    auto trigger_channel = channel_arrays({1});
+    samples_args.insert(samples_args.end(), trigger_channel.begin(),
+                        trigger_channel.end());
+    samples_args.push_back(variable(nrpc::protocol::DataType::int16, 1,
+                                    integer(std::bit_cast<std::uint16_t>(
+                                                static_cast<std::int16_t>(-1200)),
+                                            2)));
+    samples = dispatcher.dispatch(nrpc::lcard_function::read_adc_samples,
+                                  context, samples_args, arena);
+    ASSERT_TRUE(samples);
+    EXPECT_EQ(driver->last->last_trigger.mode,
+              nrpc::LcardAdcTriggerMode::analog_falling);
+    EXPECT_EQ(driver->last->last_trigger.channel.channel, 1U);
+    EXPECT_EQ(driver->last->last_trigger.threshold, -1200);
 
     auto incomplete_args = frame_args;
     incomplete_args.back() = variable(nrpc::protocol::DataType::uint32, 1,

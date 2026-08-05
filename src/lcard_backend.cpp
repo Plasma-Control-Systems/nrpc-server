@@ -100,6 +100,25 @@ std::expected<std::vector<LcardAdcChannel>, BackendError> channel_arguments(
     return output;
 }
 
+std::expected<LcardAdcTrigger, BackendError> trigger_arguments(
+    std::span<const protocol::Variable> args, std::size_t first) {
+    if (args.size() < first + 6U ||
+        !scalar(args[first], protocol::DataType::uint8, 1) ||
+        !scalar(args[first + 5U], protocol::DataType::int16, 2))
+        return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                                             "invalid ADC trigger arguments"});
+    const auto mode = read_unsigned(args[first].data);
+    auto channels = channel_arguments(args, first + 1U);
+    if (mode > static_cast<std::uint8_t>(LcardAdcTriggerMode::analog_below) ||
+        !channels || channels->size() != 1U)
+        return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                                             "invalid ADC trigger descriptor"});
+    return LcardAdcTrigger{
+        static_cast<LcardAdcTriggerMode>(mode), channels->front(),
+        std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(
+            read_unsigned(args[first + 5U].data)))};
+}
+
 std::expected<std::uint64_t, BackendError> store_device(
     const RequestContext& context, std::unique_ptr<LcardDevice> device) {
     static std::atomic<std::uint64_t> next{0x4c43000000000001ULL};
@@ -256,7 +275,7 @@ void register_lcard_backend(Dispatcher& dispatcher,
                     "ADC sample count must contain complete channel scans and not exceed 131072"});
             auto result = with_device(context, read_unsigned(args[0].data),
                 [&](LcardDevice& device) {
-                    return device.read_adc_frame(*channels, sample_count, rate,
+                    return device.read_adc_frame(*channels, sample_count, rate, {},
                                                  timeout_seconds(context));
                 });
             if (!result) return std::unexpected(BackendError{lcard_error::invalid_handle,
@@ -356,14 +375,20 @@ void register_lcard_backend(Dispatcher& dispatcher,
         [](const RequestContext& context,
            std::span<const protocol::Variable> args,
            Arena& arena) -> BackendResult {
-            if (args.size() != 7U ||
+            if ((args.size() != 7U && args.size() != 13U) ||
                 !scalar(args[0], protocol::DataType::uint64, 8) ||
                 !scalar(args[5], protocol::DataType::uint32, 4) ||
                 !scalar(args[6], protocol::DataType::float64, 8))
                 return std::unexpected(BackendError{lcard_error::invalid_arguments,
-                    "LCard ADC samples expect handle, channel arrays, samples per channel, and rate"});
+                    "LCard ADC samples expect handle, channel arrays, samples per channel, rate, and optional trigger"});
             auto channels = channel_arguments(args, 1);
             if (!channels) return std::unexpected(channels.error());
+            LcardAdcTrigger trigger{};
+            if (args.size() == 13U) {
+                auto parsed = trigger_arguments(args, 7U);
+                if (!parsed) return std::unexpected(parsed.error());
+                trigger = *parsed;
+            }
             const auto samples_per_channel =
                 static_cast<std::uint32_t>(read_unsigned(args[5].data));
             const auto rate = read_double(args[6].data);
@@ -387,7 +412,7 @@ void register_lcard_backend(Dispatcher& dispatcher,
                                                      "response arena exhausted"});
             auto result = with_device(context, read_unsigned(args[0].data),
                 [&](LcardDevice& device) {
-                    return device.read_adc_frame(*channels, sample_count, rate,
+                    return device.read_adc_frame(*channels, sample_count, rate, trigger,
                                                  timeout_seconds(context));
                 });
             if (!result) return std::unexpected(BackendError{lcard_error::invalid_handle,

@@ -260,7 +260,7 @@ public:
         std::scoped_lock lock(mutex_);
         if (is_adc1(slot_.board_type) && slot_.board_type != board_l791) {
             auto frame = read_frame_locked(std::span(&channel, 1), 1U, 100.0,
-                                           timeout);
+                                           {}, timeout);
             if (!frame) return std::unexpected(frame.error());
             return frame->codes.front();
         }
@@ -278,9 +278,9 @@ public:
 
     std::expected<LcardAdcFrame, BackendError> read_adc_frame(
         std::span<const LcardAdcChannel> channels, U32 sample_count,
-        double rate, double timeout) override {
+        double rate, const LcardAdcTrigger& trigger, double timeout) override {
         std::scoped_lock lock(mutex_);
-        return read_frame_locked(channels, sample_count, rate, timeout);
+        return read_frame_locked(channels, sample_count, rate, trigger, timeout);
     }
 
     std::expected<void, BackendError> write_dac(
@@ -474,7 +474,7 @@ private:
 
     std::expected<LcardAdcFrame, BackendError> read_frame_locked(
         std::span<const LcardAdcChannel> channels, U32 sample_count,
-        double rate, double timeout) {
+        double rate, const LcardAdcTrigger& trigger, double timeout) {
         std::array<U32, 128> logical{};
         for (std::size_t i = 0; i < channels.size(); ++i) {
             auto encoded = logical_channel(channels[i]);
@@ -496,6 +496,13 @@ private:
         void* data{};
         void* sync{};
         double actual_rate{};
+        const auto mode = trigger.mode;
+        U32 trigger_channel{};
+        if (mode != LcardAdcTriggerMode::disabled) {
+            auto encoded = logical_channel(trigger.channel);
+            if (!encoded) return std::unexpected(encoded.error());
+            trigger_channel = *encoded;
+        }
         if (is_adc1(slot_.board_type)) {
             AdcParameters1 parameters{};
             parameters.type = adc_parameter;
@@ -508,11 +515,44 @@ private:
                 2U, (sample_count + parameters.irq_step - 1U) /
                          parameters.irq_step);
             parameters.sync_type = 0;
+            if (mode != LcardAdcTriggerMode::disabled &&
+                slot_.board_type != board_e2010 &&
+                slot_.board_type != board_e2010b)
+                return std::unexpected(BackendError{lcard_error::unsupported,
+                    "hardware trigger is unsupported for this board"});
             if (slot_.board_type == board_e2010 || slot_.board_type == board_e2010b) {
                 auto mask = e2010_mask(channels);
                 if (!mask) return std::unexpected(mask.error());
                 parameters.adc_input_mask = *mask;
                 parameters.sync_type = 1;
+                switch (mode) {
+                case LcardAdcTriggerMode::disabled:
+                    parameters.sync_type = 0x01U;
+                    break;
+                case LcardAdcTriggerMode::external_rising:
+                    parameters.sync_type = 0x84U;
+                    break;
+                case LcardAdcTriggerMode::external_falling:
+                    parameters.sync_type = slot_.board_type == board_e2010b
+                        ? 0x8cU : 0x94U;
+                    break;
+                case LcardAdcTriggerMode::analog_rising:
+                case LcardAdcTriggerMode::analog_falling:
+                case LcardAdcTriggerMode::analog_above:
+                case LcardAdcTriggerMode::analog_below:
+                    if (slot_.board_type != board_e2010b)
+                        return std::unexpected(BackendError{lcard_error::unsupported,
+                            "analog trigger is supported only by E20-10B"});
+                    parameters.sync_type = 0x01U;
+                    parameters.sync_mode =
+                        (mode == LcardAdcTriggerMode::analog_rising ? 0x80U :
+                         mode == LcardAdcTriggerMode::analog_falling ? 0x84U :
+                         mode == LcardAdcTriggerMode::analog_above ? 0x88U : 0x8cU) |
+                        (trigger_channel & 0x3U);
+                    parameters.sync_threshold =
+                        std::bit_cast<U16>(trigger.threshold);
+                    break;
+                }
             }
             parameters.channel_count = static_cast<U32>(channels.size());
             std::copy_n(logical.begin(), channels.size(), parameters.channels);
@@ -538,6 +578,30 @@ private:
                 2U, (sample_count + parameters.irq_step - 1U) /
                          parameters.irq_step);
             parameters.sync_type = (slot_.board_type == board_pcia || slot_.board_type == board_pcib || slot_.board_type == board_pcic) ? 3U : 0U;
+            const bool e14 = slot_.board_type == board_e140 ||
+                             slot_.board_type == board_e440;
+            if (mode != LcardAdcTriggerMode::disabled && !e14)
+                return std::unexpected(BackendError{lcard_error::unsupported,
+                    "hardware trigger is unsupported for this board"});
+            if (e14) {
+                if (mode == LcardAdcTriggerMode::external_falling)
+                    return std::unexpected(BackendError{lcard_error::unsupported,
+                        "E14 external trigger edge is fixed by hardware"});
+                if (mode == LcardAdcTriggerMode::external_rising) {
+                    parameters.sync_type = 1U;
+                } else if (mode != LcardAdcTriggerMode::disabled) {
+                    parameters.sync_type = 3U;
+                    parameters.sync_sensitivity =
+                        mode == LcardAdcTriggerMode::analog_rising ||
+                        mode == LcardAdcTriggerMode::analog_falling;
+                    parameters.sync_mode =
+                        mode == LcardAdcTriggerMode::analog_falling ||
+                        mode == LcardAdcTriggerMode::analog_below;
+                    parameters.sync_channel = trigger_channel;
+                    parameters.sync_threshold =
+                        std::bit_cast<U16>(trigger.threshold);
+                }
+            }
             parameters.channel_count = static_cast<U32>(channels.size());
             std::copy_n(logical.begin(), channels.size(), parameters.channels);
             parameters.irq_enabled = 1;
@@ -748,6 +812,9 @@ public:
         info.capabilities = lcard_capability::read_adc |
                             lcard_capability::read_adc_frame |
                             lcard_capability::read_adc_samples;
+        if (slot.board_type == board_e440 || slot.board_type == board_e140 ||
+            slot.board_type == board_e2010 || slot.board_type == board_e2010b)
+            info.capabilities |= lcard_capability::hardware_trigger;
         if (info.dac_present) info.capabilities |= lcard_capability::write_dac;
         const bool e140_stream = slot.board_type == board_e140 &&
             info.revision != static_cast<U8>('A') &&
