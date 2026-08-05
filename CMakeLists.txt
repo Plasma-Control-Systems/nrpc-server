@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(nrpc VERSION 1.0.0 LANGUAGES CXX)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
+project(nrpc VERSION 1.0.0 LANGUAGES C CXX)
+
+include(FetchContent)
+
+set(NRPC_LIBUV_VERSION "1.52.1")
+set(NRPC_MBEDTLS_VERSION "3.6.6")
+set(NRPC_GOOGLETEST_VERSION "1.17.0")
 
 if(WIN32)
     set(NRPC_DEFAULT_PLATFORM windows)
@@ -51,64 +61,38 @@ set(
     ""
     CACHE PATH "Path to the standalone nrpc-python-client repository"
 )
-set(
-    NRPC_THIRDPARTY_DIR
-    "${PROJECT_SOURCE_DIR}/thirdparty"
-    CACHE PATH "Windows-only directory containing include/ and libs/ folders"
-)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(PLATFORM STREQUAL "windows")
-    set(NRPC_THIRDPARTY_INCLUDE_DIR "${NRPC_THIRDPARTY_DIR}/include")
-    set(NRPC_THIRDPARTY_LIBRARY_DIR "${NRPC_THIRDPARTY_DIR}/libs")
+set(LIBUV_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(LIBUV_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LIBUV_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    libuv
+    GIT_REPOSITORY https://github.com/libuv/libuv.git
+    GIT_TAG "v${NRPC_LIBUV_VERSION}"
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(libuv)
+set(NRPC_LIBUV_TARGET uv_a)
 
-    find_path(
-        NRPC_LIBUV_INCLUDE_DIR
-        NAMES uv.h
-        PATHS "${NRPC_THIRDPARTY_INCLUDE_DIR}"
-        NO_DEFAULT_PATH
-    )
-    find_library(
-        NRPC_LIBUV_LIBRARY
-        NAMES uv_a libuv_a libuv uv
-        PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}"
-        NO_DEFAULT_PATH
-    )
-    if(NOT NRPC_LIBUV_INCLUDE_DIR OR NOT NRPC_LIBUV_LIBRARY)
-        message(
-            FATAL_ERROR
-            "Windows builds require libuv in ${NRPC_THIRDPARTY_DIR}: "
-            "put uv.h under include/ and uv_a.lib, libuv_a.lib, "
-            "libuv.lib, or uv.lib under libs/"
-        )
-    endif()
-
-    add_library(nrpc_libuv UNKNOWN IMPORTED)
-    set_target_properties(
-        nrpc_libuv PROPERTIES
-        IMPORTED_LOCATION "${NRPC_LIBUV_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${NRPC_LIBUV_INCLUDE_DIR}"
-        INTERFACE_LINK_LIBRARIES "ws2_32;iphlpapi;psapi;userenv;dbghelp"
-    )
-    set(NRPC_LIBUV_TARGET nrpc_libuv)
-else()
-    find_package(libuv CONFIG QUIET)
-    if(TARGET unofficial::libuv::libuv)
-        set(NRPC_LIBUV_TARGET unofficial::libuv::libuv)
-    elseif(TARGET libuv::uv)
-        set(NRPC_LIBUV_TARGET libuv::uv)
-    elseif(TARGET uv)
-        set(NRPC_LIBUV_TARGET uv)
-    elseif(TARGET uv_a)
-        set(NRPC_LIBUV_TARGET uv_a)
-    else()
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(LIBUV REQUIRED IMPORTED_TARGET libuv)
-        set(NRPC_LIBUV_TARGET PkgConfig::LIBUV)
-    endif()
-endif()
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    mbedtls
+    URL
+        "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${NRPC_MBEDTLS_VERSION}/mbedtls-${NRPC_MBEDTLS_VERSION}.tar.bz2"
+    URL_HASH
+        SHA256=8fb65fae8dcae5840f793c0a334860a411f884cc537ea290ce1c52bb64ca007a
+)
+FetchContent_MakeAvailable(mbedtls)
+set(NRPC_MBEDTLS_TARGET MbedTLS::mbedtls)
 
 function(nrpc_enable_warnings target)
     if(MSVC)
@@ -139,77 +123,9 @@ else()
     target_sources(nrpc PRIVATE src/serial_port_posix.cpp)
 endif()
 
-set(NRPC_HAS_TLS OFF)
-if(PLATFORM STREQUAL "windows")
-    find_path(
-        NRPC_MBEDTLS_INCLUDE_DIR
-        NAMES mbedtls/ssl.h
-        PATHS "${NRPC_THIRDPARTY_INCLUDE_DIR}"
-        NO_DEFAULT_PATH
-    )
-    find_library(
-        NRPC_MBEDTLS_LIBRARY
-        NAMES mbedtls
-        PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}"
-        NO_DEFAULT_PATH
-    )
-    find_library(
-        NRPC_MBEDX509_LIBRARY
-        NAMES mbedx509
-        PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}"
-        NO_DEFAULT_PATH
-    )
-    find_library(
-        NRPC_MBEDCRYPTO_LIBRARY
-        NAMES mbedcrypto
-        PATHS "${NRPC_THIRDPARTY_LIBRARY_DIR}"
-        NO_DEFAULT_PATH
-    )
-    if(
-        NRPC_MBEDTLS_INCLUDE_DIR
-        AND NRPC_MBEDTLS_LIBRARY
-        AND NRPC_MBEDX509_LIBRARY
-        AND NRPC_MBEDCRYPTO_LIBRARY
-    )
-        add_library(nrpc_mbedtls INTERFACE)
-        target_include_directories(nrpc_mbedtls INTERFACE "${NRPC_MBEDTLS_INCLUDE_DIR}")
-        target_link_libraries(
-            nrpc_mbedtls INTERFACE
-            "${NRPC_MBEDTLS_LIBRARY}"
-            "${NRPC_MBEDX509_LIBRARY}"
-            "${NRPC_MBEDCRYPTO_LIBRARY}"
-            bcrypt
-        )
-        set(NRPC_MBEDTLS_TARGET nrpc_mbedtls)
-        set(NRPC_HAS_TLS ON)
-    else()
-        message(STATUS "mbedTLS not found in ${NRPC_THIRDPARTY_DIR}; TLS is unavailable")
-    endif()
-else()
-    find_package(MbedTLS QUIET)
-    if(TARGET MbedTLS::mbedtls)
-        set(NRPC_MBEDTLS_TARGET MbedTLS::mbedtls)
-        set(NRPC_HAS_TLS ON)
-    else()
-        find_package(PkgConfig QUIET)
-        if(PkgConfig_FOUND)
-            pkg_check_modules(
-                MBEDTLS QUIET IMPORTED_TARGET
-                mbedtls mbedx509 mbedcrypto
-            )
-        endif()
-        if(TARGET PkgConfig::MBEDTLS)
-            set(NRPC_MBEDTLS_TARGET PkgConfig::MBEDTLS)
-            set(NRPC_HAS_TLS ON)
-        else()
-            message(STATUS "mbedTLS not found; TLS is unavailable")
-        endif()
-    endif()
-endif()
-if(NRPC_HAS_TLS)
-    target_sources(nrpc PRIVATE src/tls_transport.cpp)
-    target_link_libraries(nrpc PRIVATE ${NRPC_MBEDTLS_TARGET})
-endif()
+set(NRPC_HAS_TLS ON)
+target_sources(nrpc PRIVATE src/tls_transport.cpp)
+target_link_libraries(nrpc PRIVATE ${NRPC_MBEDTLS_TARGET})
 
 target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
@@ -245,24 +161,17 @@ install(TARGETS nrpc_server RUNTIME DESTINATION bin COMPONENT runtime)
 
 include(CTest)
 if(BUILD_TESTING)
-    if(PLATFORM STREQUAL "windows")
-        find_package(
-            GTest CONFIG QUIET
-            PATHS "${NRPC_THIRDPARTY_DIR}/libs/cmake/GTest"
-        )
-    else()
-        find_package(GTest CONFIG QUIET)
-    endif()
-    if(NOT TARGET GTest::gtest_main)
-        include(FetchContent)
-        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            googletest
-            GIT_REPOSITORY https://github.com/google/googletest.git
-            GIT_TAG v1.14.0
-        )
-        FetchContent_MakeAvailable(googletest)
-    endif()
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG "v${NRPC_GOOGLETEST_VERSION}"
+        GIT_SHALLOW TRUE
+        GIT_PROGRESS TRUE
+    )
+    FetchContent_MakeAvailable(googletest)
 
     if(
         NOT NRPC_PYTHON_CLIENT_SOURCE_DIR

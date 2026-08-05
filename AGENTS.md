@@ -12,7 +12,7 @@ Use these sources in this order:
 4. `README.md` documents supported builds, runtime configuration, backends, and errors.
 5. Tests describe required edge cases. Do not weaken protocol validation to make a test pass.
 
-The sibling `../nrpc-client` repository implements the Python peer. When changing function indices, wire types, argument order, error codes, timeouts, or response shapes, update both repositories, their READMEs/examples, and integration tests together. Do not edit generated build output or vendored dependencies under `build-*`, `temp`, or `thirdparty`.
+The sibling `../nrpc-client` repository implements the Python peer. When changing function indices, wire types, argument order, error codes, timeouts, or response shapes, update both repositories, their READMEs/examples, and integration tests together. Do not edit generated build output or fetched dependencies under `build-*` or `temp`.
 
 ## Architecture
 
@@ -113,9 +113,9 @@ The exact argument and result schemas are documented in `README.md` and implemen
 
 ## Configuration and running
 
-CLI options are `--config PATH`, `--host HOST`, positional port, `--log-file PATH`, `--workers N`, `--tls-cert PATH`, `--tls-key PATH`, and `--no-tls`. Later CLI arguments override earlier config-file values. INI sections are `[server]` (`host`, `port`, `workers`, `backlog`, `max_payload_size`, `arena_size`, `default_timeout_ms`), `[logging]` (`file`, `packet_dump`, `rpc_timing`), and `[tls]` (`enabled`, `certificate`, `private_key`). TLS requires both certificate and key and is compiled only when mbedTLS is found. Packet dumps and per-call RPC timings are runtime opt-in.
+CLI options are `--config PATH`, `--host HOST`, positional port, `--log-file PATH`, `--workers N`, `--tls-cert PATH`, `--tls-key PATH`, and `--no-tls`. Later CLI arguments override earlier config-file values. INI sections are `[server]` (`host`, `port`, `workers`, `backlog`, `max_payload_size`, `arena_size`, `default_timeout_ms`), `[logging]` (`file`, `packet_dump`, `rpc_timing`), and `[tls]` (`enabled`, `certificate`, `private_key`). TLS requires both certificate and key. Packet dumps and per-call RPC timings are runtime opt-in.
 
-Build and test from the repository root. On Windows use a Visual Studio Developer PowerShell with x64 libuv dependencies under `thirdparty`:
+Build and test from the repository root. On first configure, CMake fetches the pinned libuv and Mbed TLS releases; GoogleTest is fetched only when `BUILD_TESTING=ON`. On Windows use a Visual Studio Developer PowerShell:
 
 ```powershell
 cmake -S . -B build-windows -A x64 -DPLATFORM=windows -DBUILD_TESTING=ON

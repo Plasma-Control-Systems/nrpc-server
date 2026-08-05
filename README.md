@@ -68,8 +68,10 @@ values, TLS, and deployment before connecting real equipment.
 ## Build
 
 The project requires CMake 3.20 or newer, a C++23 compiler with
-`std::expected`, and libuv. mbedTLS is optional and enables TLS connections.
-GoogleTest is needed only when `BUILD_TESTING=ON`.
+`std::expected`, Git, and internet access during the first configure. CMake
+fetches pinned releases of libuv 1.52.1 and Mbed TLS 3.6.6 LTS and builds them
+statically. When `BUILD_TESTING=ON`, it also fetches GoogleTest 1.17.0. No
+prebuilt dependency directory or system development package is required.
 
 The build has two configurations:
 
@@ -82,33 +84,9 @@ When omitted, CMake chooses the current host platform.
 ### Windows
 
 Install Visual Studio 2022 Build Tools (or Visual Studio 2022) with the
-**Desktop development with C++** workload. Build all libraries for the same
-architecture as the server; the commands below use 64-bit libraries.
-
-Windows dependencies are discovered under `thirdparty` by default. At minimum,
-copy the libuv headers and library into this layout:
-
-```text
-thirdparty/
-  include/
-    uv.h
-    uv/...
-  libs/
-    libuv.lib           # uv_a.lib, libuv_a.lib, or uv.lib also work
-```
-
-To include TLS support, add the mbedTLS headers and its three libraries:
-
-```text
-thirdparty/
-  include/
-    mbedtls/...
-    psa/...
-  libs/
-    mbedtls.lib
-    mbedx509.lib
-    mbedcrypto.lib
-```
+**Desktop development with C++** workload and Git. The commands below use the
+x64 architecture. CMake downloads and builds the pinned dependencies in the
+build tree during the first configure.
 
 Configure, build, and test from a Developer PowerShell prompt:
 
@@ -120,11 +98,9 @@ ctest --test-dir build-windows -C Debug --output-on-failure
 
 The executable is `build-windows\Debug\nrpc_server.exe`. While it is running,
 Windows displays the nRPC icon in the taskbar notification area; hovering over
-it shows the listening port. The icon is removed when the server exits.
-If mbedTLS is not in
-`thirdparty`, CMake prints a status message and builds the plaintext transport.
-Use `-DNRPC_THIRDPARTY_DIR=C:\path\to\dependencies` to select another dependency
-directory.
+it shows the listening port. The icon is removed when the server exits. TLS is
+always compiled into the server; it remains disabled at runtime until a
+certificate and private key are configured.
 
 Create an optimized build without tests as follows:
 
@@ -149,11 +125,11 @@ checked automatically.
 
 ### Linux (Ubuntu/Debian)
 
-Install the compiler and development packages:
+Install the compiler, CMake, and Git:
 
 ```sh
 sudo apt update
-sudo apt install build-essential cmake pkg-config libuv1-dev libmbedtls-dev libgtest-dev
+sudo apt install build-essential cmake git
 ```
 
 Configure, build, and test:
@@ -166,8 +142,7 @@ cmake --build build-linux --parallel
 ctest --test-dir build-linux --output-on-failure
 ```
 
-The executable is `build-linux/nrpc_server`. CMake discovers libuv and mbedTLS
-through their CMake packages or `pkg-config`. Linux serial support uses the
+The executable is `build-linux/nrpc_server`. Linux serial support uses the
 native POSIX `termios` API and needs no additional serial library. The NI-DAQmx
 function range is still registered; calls return runtime load errors because
 the vendor runtime is Windows-only.
@@ -190,14 +165,13 @@ cmake --build build-linux-release --parallel
 | `PLATFORM` | host platform | Must be `windows` or `linux` |
 | `CMAKE_BUILD_TYPE` | `Debug` | Single-config generators only; must be `Debug` or `Release` |
 | `BUILD_TESTING` | `ON` | Build the C++ test suite |
-| `NRPC_THIRDPARTY_DIR` | `thirdparty` | Windows dependency directory containing `include/` and `libs/` |
 | `NRPC_PYTHON_CLIENT_SOURCE_DIR` | legacy sibling auto-detection | Optional Python client tree for integration tests; set it explicitly for a sibling named `nrpc-client` |
 
 Visual Studio and other multi-config generators expose only `Debug` and
 `Release`. The built-in TCP, serial, and NI-DAQmx backend APIs are always
-compiled and registered. TLS is compiled when mbedTLS is found; otherwise the
-server builds without TLS support and reports an error if TLS certificates are
-configured at runtime.
+compiled and registered. Dependency versions are intentionally pinned in
+`CMakeLists.txt`; update and validate those pins explicitly rather than tracking
+moving branches.
 
 Packet hex dumps are disabled by default. Enable them at runtime with
 `packet_dump = true` in the server configuration.
@@ -308,9 +282,8 @@ Supported options are `--config PATH`, `--host HOST`, positional `port`,
 configuration files and command-line arguments override its values in command-line
 order.
 
-To encrypt nRPC client connections with mbedTLS, build with mbedTLS installed
-(or place its headers and libraries under `thirdparty` on Windows), then pass a
-server certificate and matching private key:
+To encrypt nRPC client connections, pass a server certificate and matching
+private key:
 
 ```bash
 ./build/nrpc_server 9000 --tls-cert server.crt --tls-key server.key

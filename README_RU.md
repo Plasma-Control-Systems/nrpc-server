@@ -5,9 +5,11 @@ C++23-сервер nRPC, построенный на libuv. Формат пер�
 
 ## Сборка
 
-Проекту требуются CMake 3.20 или новее, компилятор C++23 с `std::expected` и
-libuv. mbedTLS является необязательной зависимостью и включает TLS-соединения.
-GoogleTest нужен только при `BUILD_TESTING=ON`.
+Проекту требуются CMake 3.20 или новее, компилятор C++23 с `std::expected`, Git
+и доступ в интернет во время первой конфигурации. CMake загружает закреплённые
+релизы libuv 1.52.1 и Mbed TLS 3.6.6 LTS и собирает их статически. При
+`BUILD_TESTING=ON` также загружается GoogleTest 1.17.0. Каталог с заранее
+собранными зависимостями и системные dev-пакеты не нужны.
 
 Сборка имеет две конфигурации:
 
@@ -21,33 +23,9 @@ GoogleTest нужен только при `BUILD_TESTING=ON`.
 ### Windows
 
 Установите Visual Studio 2022 Build Tools или Visual Studio 2022 с workload
-**Desktop development with C++**. Собирайте все библиотеки под ту же
-архитектуру, что и сервер; команды ниже используют 64-битные библиотеки.
-
-По умолчанию зависимости для Windows ищутся в `thirdparty`. Как минимум
-скопируйте заголовки и библиотеку libuv в такую структуру:
-
-```text
-thirdparty/
-  include/
-    uv.h
-    uv/...
-  libs/
-    libuv.lib           # uv_a.lib, libuv_a.lib или uv.lib тоже подходят
-```
-
-Чтобы включить поддержку TLS, добавьте заголовки mbedTLS и три библиотеки:
-
-```text
-thirdparty/
-  include/
-    mbedtls/...
-    psa/...
-  libs/
-    mbedtls.lib
-    mbedx509.lib
-    mbedcrypto.lib
-```
+**Desktop development with C++**, а также Git. Команды ниже используют
+архитектуру x64. Во время первой конфигурации CMake загружает и собирает
+закреплённые зависимости внутри каталога сборки.
 
 Настройте, соберите и протестируйте проект из Developer PowerShell:
 
@@ -57,11 +35,9 @@ cmake --build build-windows --config Debug --parallel
 ctest --test-dir build-windows -C Debug --output-on-failure
 ```
 
-Исполняемый файл находится в `build-windows\Debug\nrpc_server.exe`. Если
-mbedTLS отсутствует в `thirdparty`, CMake выводит статусное сообщение и
-собирает транспорт без шифрования. Используйте
-`-DNRPC_THIRDPARTY_DIR=C:\path\to\dependencies`, чтобы выбрать другой каталог
-зависимостей.
+Исполняемый файл находится в `build-windows\Debug\nrpc_server.exe`. Поддержка
+TLS всегда компилируется в сервер, но остаётся отключённой во время выполнения,
+пока не настроены сертификат и приватный ключ.
 
 Оптимизированную сборку без тестов можно создать так:
 
@@ -79,11 +55,11 @@ API бэкенда NI-DAQmx всегда регистрируется. На Wind
 
 ### Linux (Ubuntu/Debian)
 
-Установите компилятор и пакеты разработки:
+Установите компилятор, CMake и Git:
 
 ```sh
 sudo apt update
-sudo apt install build-essential cmake pkg-config libuv1-dev libmbedtls-dev libgtest-dev
+sudo apt install build-essential cmake git
 ```
 
 Настройте, соберите и протестируйте:
@@ -96,8 +72,7 @@ cmake --build build-linux --parallel
 ctest --test-dir build-linux --output-on-failure
 ```
 
-Исполняемый файл находится в `build-linux/nrpc_server`. CMake находит libuv и
-mbedTLS через их CMake-пакеты или `pkg-config`. Поддержка последовательных
+Исполняемый файл находится в `build-linux/nrpc_server`. Поддержка последовательных
 портов в Linux использует нативный POSIX API `termios` и не требует
 дополнительной serial-библиотеки. Диапазон функций NI-DAQmx все равно
 регистрируется; вызовы возвращают ошибки загрузки runtime, потому что runtime
@@ -121,14 +96,13 @@ cmake --build build-linux-release --parallel
 | `PLATFORM` | платформа хоста | Должен быть `windows` или `linux` |
 | `CMAKE_BUILD_TYPE` | `Debug` | Только для single-config генераторов; должен быть `Debug` или `Release` |
 | `BUILD_TESTING` | `ON` | Собирать набор C++-тестов |
-| `NRPC_THIRDPARTY_DIR` | `thirdparty` | Каталог зависимостей Windows, содержащий `include/` и `libs/` |
 | `NRPC_PYTHON_CLIENT_SOURCE_DIR` | определяется автоматически | Необязательное дерево Python-клиента для интеграционных тестов |
 
 Visual Studio и другие multi-config генераторы предоставляют только `Debug` и
 `Release`. Встроенные API TCP, serial и NI-DAQmx бэкендов всегда
-компилируются и регистрируются. TLS компилируется, когда найден mbedTLS; иначе
-сервер собирается без поддержки TLS и сообщает об ошибке, если TLS-сертификаты
-настроены во время выполнения.
+компилируются и регистрируются. Версии зависимостей намеренно закреплены в
+`CMakeLists.txt`; обновляйте и проверяйте их явно, не переключая сборку на
+движущиеся ветки.
 
 Шестнадцатеричные дампы пакетов по умолчанию отключены. Включите их во время
 выполнения через `packet_dump = true` в конфигурации сервера.
@@ -240,10 +214,8 @@ TLS требует одновременно `certificate` и `private_key`, ко
 указанные файлы конфигурации и параметры командной строки переопределяют его
 значения в порядке аргументов командной строки.
 
-Чтобы шифровать подключения nRPC-клиентов с помощью mbedTLS, соберите проект с
-установленным mbedTLS или разместите его заголовки и библиотеки в `thirdparty`
-на Windows, затем передайте сертификат сервера и соответствующий приватный
-ключ:
+Чтобы шифровать подключения nRPC-клиентов, передайте сертификат сервера и
+соответствующий приватный ключ:
 
 ```bash
 ./build/nrpc_server 9000 --tls-cert server.crt --tls-key server.key
