@@ -27,6 +27,9 @@ TEST(ApplicationConfigTest, ParsesCommandLineOverrides) {
     EXPECT_FALSE(result.help_requested);
     EXPECT_EQ(result.config.server.host, "127.0.0.1");
     EXPECT_EQ(result.config.server.port, 7000);
+    EXPECT_EQ(
+        result.config.server.arena_size,
+        nrpc::protocol::default_max_payload_size);
     ASSERT_TRUE(result.config.worker_count);
     EXPECT_EQ(*result.config.worker_count, 6U);
     EXPECT_EQ(result.config.log_path, "server.log");

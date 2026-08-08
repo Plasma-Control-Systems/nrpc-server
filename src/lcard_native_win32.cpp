@@ -11,6 +11,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -487,7 +488,17 @@ private:
             point_size < 2U)
             point_size = 2;
         const U32 words_per_point = (point_size + 1U) / 2U;
-        U32 requested_words = sample_count * words_per_point;
+        // RequestBufferStream may round a non-native buffer size down (E14-440
+        // commonly maps powers of two).  Rounding the physical allocation up
+        // keeps exact logical sample counts such as 5000 from producing a
+        // mapped buffer smaller than the acquisition requested below.
+        const auto logical_words = static_cast<std::uint64_t>(sample_count) *
+                                   words_per_point;
+        const auto buffer_words = std::bit_ceil(logical_words);
+        if (buffer_words > std::numeric_limits<U32>::max())
+            return std::unexpected(BackendError{lcard_error::invalid_arguments,
+                                                 "ADC sample count is too large"});
+        U32 requested_words = static_cast<U32>(buffer_words);
         auto status = library_->functions.request_stream(
             &device_, &requested_words, stream_adc);
         if (status != l_success)

@@ -151,7 +151,7 @@ port = 9000
 workers = 4
 backlog = 128
 max_payload_size = 16777216
-arena_size = 1048576
+arena_size = 16777216
 max_pending_requests = 256
 max_pending_request_bytes = 268435456
 default_timeout_ms = 0
@@ -176,7 +176,7 @@ private_key = server.key
 | `workers` | по умолчанию libuv | Задает `UV_THREADPOOL_SIZE` для блокирующей работы бэкендов |
 | `backlog` | `128` | TCP listen backlog |
 | `max_payload_size` | `16777216` | Максимальный payload nRPC-запроса в байтах |
-| `arena_size` | `1048576` | Размер response arena на один запрос в байтах |
+| `arena_size` | `16777216` | Размер response arena на один запрос в байтах (выделяется лениво) |
 | `max_pending_requests` | `256` | Максимальное число выполняющихся и ожидающих запросов |
 | `max_pending_request_bytes` | `268435456` | Максимальный суммарный payload выполняющихся и ожидающих запросов |
 | `default_timeout_ms` | `0` | Тайм-аут, используемый, когда запрос не содержит тайм-аут; `0` отключает значение по умолчанию |

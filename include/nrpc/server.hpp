@@ -17,7 +17,9 @@ struct ServerConfig {
     std::uint16_t port{9000};
     std::uint32_t max_payload_size{protocol::default_max_payload_size};
     std::uint32_t default_timeout_ms{0};
-    std::size_t arena_size{1024U * 1024U};
+    // Response storage is allocated lazily. Match the default payload limit so
+    // large finite ADC acquisitions are not rejected before serialization.
+    std::size_t arena_size{protocol::default_max_payload_size};
     std::size_t max_pending_requests{256};
     std::size_t max_pending_request_bytes{256U * 1024U * 1024U};
     int backlog{128};
