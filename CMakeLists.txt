@@ -115,6 +115,7 @@ add_library(nrpc
     src/protocol.cpp
     src/resource_manager.cpp
     src/serial_backend.cpp
+    src/spi_backend.cpp
     src/server.cpp
     src/tcp_backend.cpp
 )
@@ -122,6 +123,19 @@ if(PLATFORM STREQUAL "windows")
     target_sources(nrpc PRIVATE src/serial_port_win32.cpp src/lcard_native_win32.cpp)
 else()
     target_sources(nrpc PRIVATE src/serial_port_posix.cpp)
+endif()
+
+set(NRPC_HAS_SPIDEV OFF)
+if(PLATFORM STREQUAL "linux")
+    include(CheckIncludeFileCXX)
+    check_include_file_cxx("linux/spi/spidev.h" NRPC_SPIDEV_HEADER_FOUND)
+    if(NRPC_SPIDEV_HEADER_FOUND)
+        set(NRPC_HAS_SPIDEV ON)
+        target_sources(nrpc PRIVATE src/spi_spidev_linux.cpp)
+        message(STATUS "SPI backend enabled with Linux spidev")
+    else()
+        message(STATUS "SPI backend disabled; linux/spi/spidev.h was not found")
+    endif()
 endif()
 
 set(NRPC_HAS_LIBGPIOD OFF)
@@ -154,6 +168,8 @@ target_compile_definitions(
     nrpc PUBLIC
     NRPC_HAS_TLS=$<BOOL:${NRPC_HAS_TLS}>
     NRPC_HAS_SERIAL_BACKEND=1
+    NRPC_HAS_SPI_BACKEND=1
+    NRPC_HAS_SPIDEV=$<BOOL:${NRPC_HAS_SPIDEV}>
     NRPC_HAS_GPIO_BACKEND=1
     NRPC_HAS_LIBGPIOD=$<BOOL:${NRPC_HAS_LIBGPIOD}>
     NRPC_HAS_NIDAQMX_BACKEND=1

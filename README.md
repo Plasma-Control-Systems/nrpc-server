@@ -5,7 +5,7 @@ C++23 nRPC server built on libuv. The wire format and behavior follow
 
 nRPC exposes blocking equipment APIs through a small typed RPC protocol. A
 client connects once, invokes numeric functions, and receives typed values or
-a structured error. The server keeps socket, serial, NI-DAQmx, and LCard work
+a structured error. The server keeps socket, serial, SPI, NI-DAQmx, and LCard work
 off the event-loop thread and automatically releases client-owned resources
 when a connection closes.
 
@@ -16,7 +16,7 @@ when a connection closes.
 - strict, bounded wire decoding with a configurable 16 MiB default payload cap
 - libuv worker-pool isolation for blocking instrument and driver operations
 - connection-scoped handles with automatic disconnect cleanup
-- TCP, native serial, and Linux GPIO backends
+- TCP, native serial, and Linux GPIO/SPI backends
 - runtime-loaded NI-DAQmx and LCard drivers without vendor SDK build dependencies
 - INI configuration, command-line overrides, dual stderr/file logging, and
   optional packet hex dumps
@@ -72,7 +72,9 @@ The project requires CMake 3.20 or newer, a C++23 compiler with
 fetches pinned releases of libuv 1.52.1 and Mbed TLS 3.6.6 LTS and builds them
 statically. When `BUILD_TESTING=ON`, it also fetches GoogleTest 1.17.0. No
 prebuilt dependency directory is required. GPIO support is enabled when the
-system `libgpiod` development package is available at configure time.
+system `libgpiod` development package is available at configure time. Linux
+SPI support uses the kernel's standard spidev userspace header and adds no
+runtime library dependency.
 
 The build has two configurations:
 
@@ -147,6 +149,10 @@ The executable is `build-linux/nrpc_server`. Linux serial support uses the
 native POSIX `termios` API and needs no additional serial library. The NI-DAQmx
 function range is still registered; calls return runtime load errors because
 the vendor runtime is Windows-only.
+
+SPI is available through `/dev/spidev<bus>.<chip-select>` devices. The board's
+device tree must enable the controller and spidev node, and the server process
+must have read/write permission for that device.
 
 CMake accepts both libgpiod 1.x and 2.x and selects the matching API adapter.
 If libgpiod is not installed, the rest of the server remains buildable, but
@@ -309,6 +315,7 @@ The sample executable registers two mock functions:
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
 - `48` through `51`: Linux libgpiod backend
+- `52` through `54`: Linux spidev backend
 - `64` through `74`: Windows NI-DAQmx backend
 - `80` through `86`: Windows LCard/LComp backend
 
@@ -386,6 +393,27 @@ connection, and is released on close or disconnect. Writing an input fails.
 The server process needs read/write permission for `/dev/gpiochip*`. Prefer a
 dedicated service user and an appropriate group or udev rule instead of
 running the server as root.
+
+## SPI Backend
+
+The Linux SPI backend uses the kernel spidev userspace API and works with
+board-independent device paths such as `/dev/spidev0.0`. It performs
+full-duplex transfers: every transmitted byte clocks one received byte.
+
+`register_spi_backend(dispatcher)` installs this function table:
+
+| Index | Operation | Arguments | Result |
+| ---: | --- | --- | --- |
+| 52 | Open | `string device`, `uint8 mode`, `uint32 max_speed_hz`, `uint8 bits_per_word`, `bool lsb_first` | `uint64 handle` |
+| 53 | Transfer | `uint64 handle`, `bytes transmit`, `uint32 speed_hz`, `uint16 delay_us`, `bool cs_change` | `bytes receive` |
+| 54 | Close | `uint64 handle` | no variables |
+
+Modes `0..3` map directly to SPI modes 0 through 3. A transfer speed of zero
+uses the maximum speed configured at open. One transfer keeps chip select
+asserted for its complete buffer; `cs_change` requests a chip-select change
+afterward. Devices are connection-scoped and close automatically on disconnect.
+The server process needs read/write permission for `/dev/spidev*`; use an
+appropriate group or udev rule instead of running it as root.
 
 ## NI-DAQmx Backend
 
@@ -555,6 +583,12 @@ Server-reserved error codes:
 | 4005 | Invalid or foreign GPIO line handle |
 | 4006 | GPIO read failed |
 | 4007 | GPIO write failed |
+| 4501 | Invalid SPI backend arguments |
+| 4502 | Linux spidev API is unavailable in this server build |
+| 4503 | SPI device open failed |
+| 4504 | SPI device configuration failed |
+| 4505 | Invalid or foreign SPI device handle |
+| 4506 | SPI transfer failed |
 | 5001 | Invalid NI-DAQmx backend arguments |
 | 5002 | NI-DAQmx runtime load failed |
 | 5003 | NI-DAQmx task/channel creation failed |
@@ -626,6 +660,7 @@ If the arena cannot satisfy an allocation, the handler returns error `1003`.
 | `src/*_backend.cpp` | RPC argument validation and backend operations |
 | `src/serial_port_*.cpp` | Win32/POSIX serial implementations |
 | `src/gpio_libgpiod_*.cpp` | libgpiod 1.x/2.x GPIO implementations |
+| `src/spi_spidev_linux.cpp` | Linux spidev implementation |
 | `tests/` | unit, integration, simulated-instrument, and platform tests |
 | `resources/` | Windows executable resources and notification icon |
 

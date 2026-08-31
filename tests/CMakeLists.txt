@@ -9,6 +9,7 @@ add_executable(nrpc_tests
     protocol_test.cpp
     resource_manager_test.cpp
     smoke_test.cpp
+    spi_backend_test.cpp
 )
 if(PLATFORM STREQUAL "windows")
     target_sources(nrpc_tests PRIVATE serial_port_win32_test.cpp)
