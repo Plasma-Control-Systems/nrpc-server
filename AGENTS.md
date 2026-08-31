@@ -98,15 +98,17 @@ Built-in function table:
 | `0`, `1` | sample | arena-backed echo; blocking sleep with one `uint32` milliseconds argument |
 | `16..19` | TCP | open, write, read, close |
 | `32..35` | serial | open, write, read, close |
+| `48..51` | GPIO | open, read, write, close |
 | `64..74` | NI-DAQmx | create AI/TC/AO/DI/DO, start, analog/digital read/write, close |
 | `80..85` | LCard | open, single/frame ADC, single/finite-frame DAC, close |
 
-The exact argument and result schemas are documented in `README.md` and implemented in the matching backend source. Server-reserved errors are `1001..1004`; TCP uses `2001..2007`, serial `3001..3008`, NI-DAQmx `5001..5006`, and LCard `6001..6007`. Keep symbolic constants in the public headers and readable descriptions in the Python client synchronized.
+The exact argument and result schemas are documented in `README.md` and implemented in the matching backend source. Server-reserved errors are `1001..1004`; TCP uses `2001..2007`, serial `3001..3008`, GPIO `4001..4007`, NI-DAQmx `5001..5006`, and LCard `6001..6007`. Keep symbolic constants in the public headers and readable descriptions in the Python client synchronized.
 
 ## Backend constraints
 
 - TCP uses OS sockets and `getaddrinfo`; propagate the request timeout to connect/read/write and support IPv4, IPv6, and hostnames.
 - Serial uses native Win32 handles or POSIX `termios`. Keep platform-specific behavior behind `serial_port_*`. Mark/space parity and DTR/DSR are not universally representable; return `3008` when unsupported.
+- GPIO uses libgpiod on Linux. Keep libgpiod 1.x and 2.x code in separate adapters, address lines by chip path and offset, and preserve connection-scoped exclusive ownership.
 - NI-DAQmx is always registered. Windows loads `nicaiu.dll` dynamically; other platforms/runtime absence must produce a runtime-load error, not a build dependency.
 - LCard is always registered and dynamically loads WLCOMP/LComp on Windows. Preserve injectable driver abstractions used by unit tests. Raw ADC/DAC codes are intentional; voltage conversion belongs to applications. See `lcomp_pipeline.md` before changing stream sequencing or board-specific behavior.
 - Native resource `close()` implementations must be idempotent and `noexcept`.

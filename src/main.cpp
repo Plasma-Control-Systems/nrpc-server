@@ -17,6 +17,7 @@
 #include "nrpc/application_config.hpp"
 #include "nrpc/lcard_backend.hpp"
 #include "nrpc/nidaqmx_backend.hpp"
+#include "nrpc/gpio_backend.hpp"
 #include "nrpc/serial_backend.hpp"
 #include "nrpc/server.hpp"
 #include "nrpc/tcp_backend.hpp"
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
     }
     nrpc::ResourceManager resources;
     nrpc::Dispatcher dispatcher;
+    nrpc::register_gpio_backend(dispatcher);
     nrpc::register_nidaqmx_backend(dispatcher);
     nrpc::register_lcard_backend(dispatcher);
     nrpc::register_serial_backend(dispatcher);

@@ -16,7 +16,7 @@ when a connection closes.
 - strict, bounded wire decoding with a configurable 16 MiB default payload cap
 - libuv worker-pool isolation for blocking instrument and driver operations
 - connection-scoped handles with automatic disconnect cleanup
-- TCP and native serial backends on supported desktop platforms
+- TCP, native serial, and Linux GPIO backends
 - runtime-loaded NI-DAQmx and LCard drivers without vendor SDK build dependencies
 - INI configuration, command-line overrides, dual stderr/file logging, and
   optional packet hex dumps
@@ -71,7 +71,8 @@ The project requires CMake 3.20 or newer, a C++23 compiler with
 `std::expected`, Git, and internet access during the first configure. CMake
 fetches pinned releases of libuv 1.52.1 and Mbed TLS 3.6.6 LTS and builds them
 statically. When `BUILD_TESTING=ON`, it also fetches GoogleTest 1.17.0. No
-prebuilt dependency directory or system development package is required.
+prebuilt dependency directory is required. GPIO support is enabled when the
+system `libgpiod` development package is available at configure time.
 
 The build has two configurations:
 
@@ -129,7 +130,7 @@ Install the compiler, CMake, and Git:
 
 ```sh
 sudo apt update
-sudo apt install build-essential cmake git
+sudo apt install build-essential cmake git pkg-config libgpiod-dev
 ```
 
 Configure, build, and test:
@@ -146,6 +147,10 @@ The executable is `build-linux/nrpc_server`. Linux serial support uses the
 native POSIX `termios` API and needs no additional serial library. The NI-DAQmx
 function range is still registered; calls return runtime load errors because
 the vendor runtime is Windows-only.
+
+CMake accepts both libgpiod 1.x and 2.x and selects the matching API adapter.
+If libgpiod is not installed, the rest of the server remains buildable, but
+GPIO open calls return error `4002`.
 
 Create an optimized build without tests as follows:
 
@@ -303,6 +308,7 @@ The sample executable registers two mock functions:
 - `1`: blocking sleep accepting one network-order `uint32` duration in ms
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
+- `48` through `51`: Linux libgpiod backend
 - `64` through `74`: Windows NI-DAQmx backend
 - `80` through `86`: Windows LCard/LComp backend
 
@@ -353,6 +359,33 @@ control codes are none `0`, software `1`, RTS/CTS `2`, and DTR/DSR `3`.
 The POSIX backend accepts baud rates exposed by the host's `termios` API.
 Platform-specific modes that `termios` cannot represent return error `3008`;
 this includes DTR/DSR flow control and, on macOS, mark/space parity.
+
+## GPIO Backend
+
+The Linux GPIO backend uses the GPIO character-device ABI through libgpiod.
+It works with board-independent chip paths and line offsets, including GPIO
+controllers exposed by Raspberry Pi and Orange Pi kernels. Use `gpioinfo` to
+discover the correct chip and offset for the board and device-tree setup;
+physical header pin numbers are not GPIO line offsets.
+
+`register_gpio_backend(dispatcher)` installs this function table:
+
+| Index | Operation | Arguments | Result |
+| ---: | --- | --- | --- |
+| 48 | Open | `string chip`, `uint32 offset`, `uint8 direction`, `bool initial_value`, `bool active_low`, `string consumer` | `uint64 handle` |
+| 49 | Read | `uint64 handle` | `bool value` |
+| 50 | Write | `uint64 handle`, `bool value` | no variables |
+| 51 | Close | `uint64 handle` | no variables |
+
+Direction `0` requests an input and direction `1` requests an output. The
+initial value is applied atomically when an output is requested and ignored
+for inputs. Values are logical, so enabling `active_low` inverts their mapping
+to the physical signal. A requested line is exclusive, belongs to the nRPC
+connection, and is released on close or disconnect. Writing an input fails.
+
+The server process needs read/write permission for `/dev/gpiochip*`. Prefer a
+dedicated service user and an appropriate group or udev rule instead of
+running the server as root.
 
 ## NI-DAQmx Backend
 
@@ -515,6 +548,13 @@ Server-reserved error codes:
 | 3006 | Serial read failed |
 | 3007 | Serial operation timed out |
 | 3008 | Serial operation unsupported |
+| 4001 | Invalid GPIO backend arguments |
+| 4002 | libgpiod is unavailable in this server build |
+| 4003 | GPIO chip open failed |
+| 4004 | GPIO line request failed |
+| 4005 | Invalid or foreign GPIO line handle |
+| 4006 | GPIO read failed |
+| 4007 | GPIO write failed |
 | 5001 | Invalid NI-DAQmx backend arguments |
 | 5002 | NI-DAQmx runtime load failed |
 | 5003 | NI-DAQmx task/channel creation failed |
@@ -585,6 +625,7 @@ If the arena cannot satisfy an allocation, the handler returns error `1003`.
 | `src/resource_manager.cpp` | connection-scoped native-resource ownership |
 | `src/*_backend.cpp` | RPC argument validation and backend operations |
 | `src/serial_port_*.cpp` | Win32/POSIX serial implementations |
+| `src/gpio_libgpiod_*.cpp` | libgpiod 1.x/2.x GPIO implementations |
 | `tests/` | unit, integration, simulated-instrument, and platform tests |
 | `resources/` | Windows executable resources and notification icon |
 

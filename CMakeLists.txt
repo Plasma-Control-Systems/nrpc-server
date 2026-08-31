@@ -108,6 +108,7 @@ endfunction()
 add_library(nrpc
     src/arena.cpp
     src/dispatcher.cpp
+    src/gpio_backend.cpp
     src/lcard_backend.cpp
     src/logger.cpp
     src/nidaqmx_backend.cpp
@@ -123,6 +124,26 @@ else()
     target_sources(nrpc PRIVATE src/serial_port_posix.cpp)
 endif()
 
+set(NRPC_HAS_LIBGPIOD OFF)
+if(PLATFORM STREQUAL "linux")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(NRPC_LIBGPIOD QUIET IMPORTED_TARGET libgpiod)
+    endif()
+    if(NRPC_LIBGPIOD_FOUND)
+        set(NRPC_HAS_LIBGPIOD ON)
+        if(NRPC_LIBGPIOD_VERSION VERSION_LESS "2.0")
+            target_sources(nrpc PRIVATE src/gpio_libgpiod_v1.cpp)
+        else()
+            target_sources(nrpc PRIVATE src/gpio_libgpiod_v2.cpp)
+        endif()
+        target_link_libraries(nrpc PRIVATE PkgConfig::NRPC_LIBGPIOD)
+        message(STATUS "GPIO backend enabled with libgpiod ${NRPC_LIBGPIOD_VERSION}")
+    else()
+        message(STATUS "GPIO backend disabled; libgpiod was not found")
+    endif()
+endif()
+
 set(NRPC_HAS_TLS ON)
 target_sources(nrpc PRIVATE src/tls_transport.cpp)
 target_link_libraries(nrpc PRIVATE ${NRPC_MBEDTLS_TARGET})
@@ -133,6 +154,8 @@ target_compile_definitions(
     nrpc PUBLIC
     NRPC_HAS_TLS=$<BOOL:${NRPC_HAS_TLS}>
     NRPC_HAS_SERIAL_BACKEND=1
+    NRPC_HAS_GPIO_BACKEND=1
+    NRPC_HAS_LIBGPIOD=$<BOOL:${NRPC_HAS_LIBGPIOD}>
     NRPC_HAS_NIDAQMX_BACKEND=1
     NRPC_HAS_LCARD_BACKEND=1
 )
