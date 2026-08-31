@@ -29,3 +29,18 @@ TEST(Dispatcher, RoutesHandlerAndConvertsExceptions) {
     ASSERT_FALSE(failed.has_value());
     EXPECT_EQ(failed.error().code, 2U);
 }
+
+TEST(Dispatcher, ReportsRegisteredFunctionIndicesInSortedOrder) {
+    nrpc::Dispatcher dispatcher;
+    const auto handler = [](const nrpc::RequestContext&, auto, nrpc::Arena&) {
+        return nrpc::BackendResult(
+            std::vector<nrpc::protocol::VariableView>{});
+    };
+    ASSERT_TRUE(dispatcher.register_handler(200, handler));
+    ASSERT_TRUE(dispatcher.register_handler(1, handler));
+    ASSERT_TRUE(dispatcher.register_handler(42, handler));
+
+    EXPECT_EQ(
+        dispatcher.function_indices(),
+        (std::vector<std::uint8_t>{1, 42, 200}));
+}

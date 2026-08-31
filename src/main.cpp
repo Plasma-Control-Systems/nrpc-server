@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "nrpc/application_config.hpp"
+#include "nrpc/discovery.hpp"
 #include "nrpc/lcard_backend.hpp"
 #include "nrpc/nidaqmx_backend.hpp"
 #include "nrpc/gpio_backend.hpp"
@@ -22,6 +23,7 @@
 #include "nrpc/spi_backend.hpp"
 #include "nrpc/server.hpp"
 #include "nrpc/tcp_backend.hpp"
+#include "nrpc/version.hpp"
 #ifdef _WIN32
 #include "windows_notification_icon.hpp"
 #endif
@@ -131,6 +133,12 @@ int main(int argc, char** argv) {
             }
             return std::vector<nrpc::protocol::VariableView>{};
         });
+    if (!nrpc::register_discovery_handler(
+            dispatcher, NRPC_PLATFORM, NRPC_ARCHITECTURE, nrpc::version)) {
+        logger.log(nrpc::LogLevel::error,
+                   "failed to register server discovery handler");
+        return 1;
+    }
 
     try {
         nrpc::Server server(config.server, dispatcher, resources, logger);

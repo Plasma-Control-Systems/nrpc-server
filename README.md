@@ -312,6 +312,8 @@ The sample executable registers two mock functions:
 
 - `0`: arena-backed echo
 - `1`: blocking sleep accepting one network-order `uint32` duration in ms
+- `2`: server discovery returning version, protocol, platform, architecture,
+  and sorted registered function indices
 - `16` through `19`: cross-platform TCP backend
 - `32` through `35`: serial backend
 - `48` through `51`: Linux libgpiod backend

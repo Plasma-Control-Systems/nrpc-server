@@ -87,6 +87,20 @@ class ClientServerTests(unittest.TestCase):
                 [[-7, 12], True, "device", b"\x00\xff", None],
             )
 
+    def test_server_discovery(self):
+        with NrpcClient("127.0.0.1", self.port) as client:
+            info = client.get_server_info()
+
+        self.assertEqual(info.server_version, "1.0.0")
+        self.assertEqual(info.protocol_version, 1)
+        self.assertIn(info.platform, ("windows", "linux"))
+        self.assertTrue(info.architecture)
+        self.assertEqual(
+            info.function_indices, tuple(sorted(info.function_indices))
+        )
+        self.assertIn(0, info.function_indices)
+        self.assertIn(2, info.function_indices)
+
     def test_server_writes_events_and_packets_to_log_file(self):
         with NrpcClient("127.0.0.1", self.port) as client:
             self.assertEqual(client.call(0, ["logged"]), ["logged"])

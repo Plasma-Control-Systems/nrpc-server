@@ -107,6 +107,7 @@ endfunction()
 
 add_library(nrpc
     src/arena.cpp
+    src/discovery.cpp
     src/dispatcher.cpp
     src/gpio_backend.cpp
     src/lcard_backend.cpp
@@ -166,6 +167,8 @@ target_include_directories(nrpc PUBLIC include)
 target_link_libraries(nrpc PUBLIC ${NRPC_LIBUV_TARGET})
 target_compile_definitions(
     nrpc PUBLIC
+    NRPC_PLATFORM="${PLATFORM}"
+    NRPC_ARCHITECTURE="${CMAKE_SYSTEM_PROCESSOR}"
     NRPC_HAS_TLS=$<BOOL:${NRPC_HAS_TLS}>
     NRPC_HAS_SERIAL_BACKEND=1
     NRPC_HAS_SPI_BACKEND=1

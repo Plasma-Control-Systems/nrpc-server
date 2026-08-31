@@ -39,6 +39,7 @@ using BackendHandler = std::function<BackendResult(
 class Dispatcher {
 public:
     bool register_handler(std::uint8_t function_index, BackendHandler handler);
+    [[nodiscard]] std::vector<std::uint8_t> function_indices() const;
     [[nodiscard]] BackendResult dispatch(
         std::uint8_t function_index, const RequestContext& context,
         std::span<const protocol::Variable> arguments, Arena& arena) const;

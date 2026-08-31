@@ -1,6 +1,7 @@
 add_executable(nrpc_tests
     application_config_test.cpp
     arena_test.cpp
+    discovery_test.cpp
     dispatcher_test.cpp
     gpio_backend_test.cpp
     logger_test.cpp

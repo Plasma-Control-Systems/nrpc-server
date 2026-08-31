@@ -95,7 +95,7 @@ Built-in function table:
 
 | Indices | Backend | Operations |
 | --- | --- | --- |
-| `0`, `1` | sample | arena-backed echo; blocking sleep with one `uint32` milliseconds argument |
+| `0`, `1`, `2` | core | arena-backed echo; blocking sleep; server discovery metadata |
 | `16..19` | TCP | open, write, read, close |
 | `32..35` | serial | open, write, read, close |
 | `48..51` | GPIO | open, read, write, close |
